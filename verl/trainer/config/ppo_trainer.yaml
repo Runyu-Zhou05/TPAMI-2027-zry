@@ -270,6 +270,9 @@ trainer:
   # Stable task label stored in each raw reward trace row.
   reward_trace_task: null
 
+  # Stable run identifier stored in every raw reward trace row.
+  reward_trace_run_id: null
+
   # Directory for logging validation data; no dump if null
   validation_data_dir: null
 

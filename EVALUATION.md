@@ -7,7 +7,8 @@ tasks rather than on Rotation-generated questions:
 
 - MMBench;
 - SEED-Bench;
-- V*Bench with the agentic visual-search protocol;
+- VStarBench (V*), the standard MCQ benchmark used by the paper to measure
+  difficult visual-search scenarios;
 - RealWorldQA;
 - BLINK;
 - MME.
@@ -17,10 +18,16 @@ Single-Instance, and Average. SEED-Bench must report the nine subtasks shown in
 the paper table plus Average. Table I uses the six benchmark-level scores and
 their unweighted average.
 
+The authoritative paper protocol uses MMBench DEV-EN, the nine image dimensions
+of SEED-Bench (14,232 examples), VStarBench, RealWorldQA, BLINK, and
+MME-RealWorld-Lite. Evaluation uses VLMEvalKit with temperature 0.01, top-p
+0.001, and top-k 1. V* is evaluated as the paper's standard VStarBench MCQ
+dataset; no additional crop/tool agent loop is introduced.
+
 The existing `build_benchmarks/makerotation_*.py` files construct SSL4RL
 Rotation tasks from benchmark images. They are not the post-training benchmark
-evaluation implementation. In particular, `makerotation_mme.py` uses
-MME-RealWorld-Lite, not the standard MME benchmark required here.
+evaluation implementation. `makerotation_mme.py` uses MME-RealWorld-Lite,
+which is also the benchmark abbreviated as `MME` in the paper table.
 
 ## Pinned VLMEvalKit
 
@@ -117,7 +124,7 @@ FVE FSDP checkpoint
   -> portable Hugging Face export
   -> identical decoding configuration for base and FVE models
   -> VLMEvalKit evaluation for MMBench, SEED-Bench, RealWorldQA, BLINK, MME
-  -> separate V*Bench agentic visual-search runner
+  -> VLMEvalKit VStarBench evaluation
   -> per-sample predictions and official detail files
   -> Table I, Table II, and Table III aggregation
 ```
@@ -126,3 +133,25 @@ Before any full benchmark run, repeat the same MMBench smoke with an exported
 quick FVE checkpoint. This is the acceptance test for the checkpoint exporter.
 Use `scripts/evaluation/run_post_training_smoke.py` to perform checkpoint
 resolution, export validation, and MMBench smoke as one guarded command.
+
+## Tables and final package
+
+`prepare_evaluation_data.py` pins URLs and checksums for all six datasets.
+`run_six_benchmarks.py` builds the fixed VLMEvalKit config and refuses success
+unless every benchmark emits an official score artifact.
+
+`aggregate_paper_tables.py` writes CSV, JSON, and LaTeX for:
+
+- Table I: six benchmark scores and their unweighted average;
+- Table II: MMBench Logical, Relation, Attribute, Coarse, Cross-Instance,
+  Single-Instance, and weighted Overall;
+- Table III: the nine SEED-Bench image dimensions and weighted Overall.
+
+Table II/III score files may be supplied separately from Table I. This is
+required for the paper screenshot's Golden-3B 60/40 held-out comparison, whose
+detail averages differ from the standard full-benchmark scores in Table I.
+
+`package_final_results.py` creates a curated `tar.gz`, an SHA256 sidecar, and an
+artifact manifest. It includes tables, predictions, official score files,
+logs, and manifests while inventorying rather than duplicating large datasets,
+checkpoints, TensorBoard files, and per-step reward Parquets.

@@ -129,6 +129,10 @@ python scripts/evaluation/run_post_training_smoke.py \
 ```
 
 Every completed training step writes an atomic Parquet file containing one row
-per rollout response. Each row records task, `global_step`, epoch, UID,
-rollout index, dataset index, source, ground truth, and `raw_reward`. The
-current trace schema does not yet include a reward-computation timestamp.
+per rollout response. Each row records run ID, task, `global_step`, epoch, UID,
+rollout index, dataset index, source, ground truth, generated response,
+`raw_reward`, reward-computation UTC nanoseconds, and trace-write UTC
+nanoseconds. Existing step files are never overwritten silently.
+
+See `EVALUATION.md` and `AGENTS.md` for the six-benchmark run, Table I--III
+aggregation, and final result-bundle commands.

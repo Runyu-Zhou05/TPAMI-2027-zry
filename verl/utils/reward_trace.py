@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -21,15 +22,27 @@ def _as_string(value):
 class RewardTraceRecorder:
     """Write one atomic Parquet file containing every raw reward in a step."""
 
-    def __init__(self, root_dir, task_name):
+    def __init__(self, root_dir, task_name, run_id):
         self.root_dir = Path(os.path.expanduser(root_dir)).resolve()
         self.task_name = str(task_name)
+        self.run_id = str(run_id)
+        if not self.run_id:
+            raise ValueError("Reward trace run_id must be non-empty")
         self.task_dir = self.root_dir / self.task_name
         self.task_dir.mkdir(parents=True, exist_ok=True)
 
-    def write_step(self, batch, reward_tensor, global_step, epoch):
+    def write_step(self, batch, reward_tensor, global_step, epoch, responses, reward_computed_at_utc_ns):
         raw_rewards = reward_tensor.sum(-1).detach().float().cpu().numpy()
         count = len(raw_rewards)
+        responses = list(responses)
+        if len(responses) != count:
+            raise ValueError(f"Response count {len(responses)} does not match reward count {count}")
+        if reward_computed_at_utc_ns is None:
+            raise ValueError("reward_computed_at_utc_ns is required")
+        reward_computed_at_utc_ns = int(reward_computed_at_utc_ns)
+        trace_written_at_utc_ns = time.time_ns()
+        if trace_written_at_utc_ns < reward_computed_at_utc_ns:
+            raise ValueError("Trace write timestamp precedes reward computation timestamp")
 
         non_tensor = batch.non_tensor_batch
         uids = non_tensor.get("uid", np.array([None] * count, dtype=object))
@@ -52,22 +65,36 @@ class RewardTraceRecorder:
 
         table = pa.table(
             {
+                "run_id": [self.run_id] * count,
                 "task": [self.task_name] * count,
                 "global_step": np.full(count, int(global_step), dtype=np.int64),
                 "epoch": np.full(count, int(epoch), dtype=np.int32),
+                "reward_computed_at_utc_ns": np.full(count, reward_computed_at_utc_ns, dtype=np.int64),
+                "trace_written_at_utc_ns": np.full(count, trace_written_at_utc_ns, dtype=np.int64),
                 "uid": [_as_string(value) for value in uids],
                 "rollout_id": np.asarray(rollout_ids, dtype=np.int16),
                 "dataset_index": dataset_indices,
                 "data_source": [_as_string(value) for value in data_sources],
                 "ground_truth": ground_truths,
+                "response": [_as_string(value) for value in responses],
                 "raw_reward": raw_rewards,
             }
         )
 
         output = self.task_dir / f"step_{int(global_step):08d}.parquet"
         temporary = output.with_suffix(".parquet.tmp")
+        if output.exists():
+            raise FileExistsError(f"Refusing to overwrite existing reward trace: {output}")
+        if temporary.exists():
+            raise FileExistsError(f"Incomplete reward trace requires manual review: {temporary}")
         pq.write_table(table, temporary, compression="zstd")
-        os.replace(temporary, output)
+        try:
+            # Hard-link publication is atomic and refuses to overwrite a file
+            # created by another process between the checks above.
+            os.link(temporary, output)
+        finally:
+            if output.exists():
+                temporary.unlink(missing_ok=True)
 
         grouped = defaultdict(list)
         for uid, reward in zip(uids, raw_rewards, strict=True):

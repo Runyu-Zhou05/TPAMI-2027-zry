@@ -322,6 +322,66 @@ Do not start full six-benchmark evaluation unless this post-training manifest
 exists and the exported model passes the same six-subtask smoke as the base
 model.
 
+### 10. Run six benchmarks, aggregate the paper tables, and package results
+
+Download and checksum all six paper datasets. The paper protocol is
+MMBench DEV-EN v1.1, the nine image dimensions of SEEDBench_IMG, VStarBench,
+RealWorldQA, BLINK, and MME-RealWorld-Lite (the paper's abbreviated `MME`
+column is not standard MME).
+
+```bash
+python scripts/evaluation/prepare_evaluation_data.py \
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval"
+python scripts/evaluation/prepare_evaluation_data.py \
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" \
+  --verify-only
+```
+
+Evaluate the base and exported Rotation models with identical paper sampling
+parameters (`temperature=0.01`, `top-p=0.001`, `top-k=1`):
+
+```bash
+python scripts/evaluation/run_six_benchmarks.py \
+  --model-path "$FVE_MODEL_PATH" --model-name Base \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT"
+
+python scripts/evaluation/run_six_benchmarks.py \
+  --model-path <exported-hf-model> --model-name Rotation \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT"
+```
+
+Generate Table I plus the MMBench and SEED-Bench detail tables:
+
+```bash
+python scripts/evaluation/aggregate_paper_tables.py \
+  --base-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Base/six_benchmark_run_manifest.json" \
+  --rotation-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Rotation/six_benchmark_run_manifest.json" \
+  --output-dir "$FVE_OUTPUT_ROOT/evaluation/tables/<training-run-id>"
+```
+
+The screenshot containing Golden-3B uses separate 60/40 held-out MMBench and
+SEED-Bench detail runs; those detail averages are not identical to Table I.
+When reproducing that protocol, pass the four explicit `--*-detail` score-file
+overrides supported by `aggregate_paper_tables.py`. Never substitute the
+Table I aggregate for a held-out detail score.
+
+Finally create a checksum sidecar and compressed, curated result bundle. Large
+checkpoints, datasets, and per-step reward Parquets are inventoried rather than
+duplicated; tables, predictions, score artifacts, logs, and manifests are
+included.
+
+```bash
+python scripts/evaluation/package_final_results.py \
+  --run-id <training-run-id> \
+  --training-run-dir "$FVE_OUTPUT_ROOT/runs/<training-run-id>" \
+  --base-eval-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Base/six_benchmark_run_manifest.json" \
+  --rotation-eval-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Rotation/six_benchmark_run_manifest.json" \
+  --tables-dir "$FVE_OUTPUT_ROOT/evaluation/tables/<training-run-id>" \
+  --output-dir "$FVE_OUTPUT_ROOT/final"
+```
+
 ## Editing and validation rules
 
 - Keep generated models, datasets, caches, logs, traces, and checkpoints out of

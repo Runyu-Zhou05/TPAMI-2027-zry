@@ -20,6 +20,7 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import json
 import os
+import time
 import uuid
 from collections import defaultdict
 from copy import deepcopy
@@ -362,7 +363,12 @@ class RayPPOTrainer:
         self.reward_trace_recorder = None
         if reward_trace_dir:
             reward_trace_task = self.config.trainer.get("reward_trace_task", self.config.trainer.experiment_name)
-            self.reward_trace_recorder = RewardTraceRecorder(reward_trace_dir, reward_trace_task)
+            reward_trace_run_id = self.config.trainer.get("reward_trace_run_id", None)
+            if not reward_trace_run_id:
+                raise ValueError("trainer.reward_trace_run_id is required when reward tracing is enabled")
+            self.reward_trace_recorder = RewardTraceRecorder(
+                reward_trace_dir, reward_trace_task, reward_trace_run_id
+            )
 
         # if ref_in_actor is True, the reference policy will be actor without lora applied
         self.ref_in_actor = config.actor_rollout_ref.model.get("lora_rank", 0) > 0
@@ -1223,6 +1229,7 @@ class RayPPOTrainer:
                     batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
 
                     with marked_timer("reward", timing_raw, color="yellow"):
+                        reward_computed_at_utc_ns = None
                         # compute reward model score
                         if self.use_rm:
                             reward_tensor = self.rm_wg.compute_rm_score(batch)
@@ -1232,6 +1239,7 @@ class RayPPOTrainer:
                             future_reward = compute_reward_async.remote(data=batch, reward_fn=self.reward_fn)
                         else:
                             reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
+                            reward_computed_at_utc_ns = time.time_ns()
 
                     # recompute old_log_probs
                     with marked_timer("old_log_prob", timing_raw, color="blue"):
@@ -1289,14 +1297,22 @@ class RayPPOTrainer:
                         reward_extra_infos_dict: dict[str, list]
                         if self.config.reward_model.launch_reward_fn_async:
                             reward_tensor, reward_extra_infos_dict = ray.get(future_reward)
+                            reward_computed_at_utc_ns = time.time_ns()
                         batch.batch["token_level_scores"] = reward_tensor
 
                         if self.reward_trace_recorder is not None:
+                            responses = self.tokenizer.batch_decode(
+                                batch.batch["responses"],
+                                skip_special_tokens=True,
+                                clean_up_tokenization_spaces=False,
+                            )
                             reward_trace_metrics = self.reward_trace_recorder.write_step(
                                 batch=batch,
                                 reward_tensor=reward_tensor,
                                 global_step=self.global_steps,
                                 epoch=epoch,
+                                responses=responses,
+                                reward_computed_at_utc_ns=reward_computed_at_utc_ns,
                             )
                             metrics.update(reward_trace_metrics)
 

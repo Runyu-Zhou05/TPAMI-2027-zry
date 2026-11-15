@@ -174,6 +174,7 @@ def main():
         f"trainer.resume_mode={resume_mode}",
         f"trainer.reward_trace_dir={trace_root}",
         f"trainer.reward_trace_task={trace_task}",
+        f"trainer.reward_trace_run_id={run_id}",
     ]
 
     environment = os.environ.copy()
