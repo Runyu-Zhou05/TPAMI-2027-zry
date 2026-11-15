@@ -18,6 +18,7 @@ PPO Trainer with Ray-based single controller.
 This trainer supports model-agonistic model initialization with huggingface
 """
 
+import hashlib
 import json
 import os
 import time
@@ -26,6 +27,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from pprint import pprint
 from typing import Optional
 
@@ -936,7 +938,41 @@ class RayPPOTrainer:
                 worker_group=self.actor_rollout_wg,
             )
 
-    def _save_checkpoint(self):
+    @staticmethod
+    def _atomic_write(path: str, content: str):
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.tmp-{os.getpid()}")
+        with temporary.open("x") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+        directory_fd = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+
+    @staticmethod
+    def _file_inventory(root: str):
+        base = Path(root)
+        files = []
+        for path in sorted(item for item in base.rglob("*") if item.is_file()):
+            digest = hashlib.sha256()
+            with path.open("rb") as handle:
+                for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                    digest.update(block)
+            files.append(
+                {
+                    "path": str(path.relative_to(base)),
+                    "bytes": path.stat().st_size,
+                    "sha256": digest.hexdigest(),
+                }
+            )
+        return files
+
+    def _save_checkpoint(self, epoch: int):
         from verl.utils.fs import local_mkdir_safe
 
         # path: given_path + `/global_step_{global_steps}` + `/actor`
@@ -987,12 +1023,33 @@ class RayPPOTrainer:
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
 
+        dataloader_digest = hashlib.sha256()
+        with open(dataloader_local_path, "rb") as handle:
+            for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+                dataloader_digest.update(block)
+        completion_manifest = {
+            "actor_files": self._file_inventory(actor_local_path),
+            "completed_at_utc_ns": time.time_ns(),
+            "dataloader": {
+                "path": "data.pt",
+                "bytes": os.path.getsize(dataloader_local_path),
+                "sha256": dataloader_digest.hexdigest(),
+            },
+            "epoch": int(epoch),
+            "global_step": int(self.global_steps),
+            "run_id": self.config.trainer.get("reward_trace_run_id", None),
+            "schema_version": 2,
+        }
+        if self.use_critic:
+            completion_manifest["critic_files"] = self._file_inventory(critic_local_path)
+        completion_manifest_path = os.path.join(local_global_step_folder, "checkpoint_complete.json")
+        self._atomic_write(completion_manifest_path, json.dumps(completion_manifest, indent=2, sort_keys=True) + "\n")
+
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(
             self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt"
         )
-        with open(local_latest_checkpointed_iteration, "w") as f:
-            f.write(str(self.global_steps))
+        self._atomic_write(local_latest_checkpointed_iteration, str(self.global_steps))
 
     def _load_checkpoint(self):
         if self.config.trainer.resume_mode == "disable":
@@ -1029,6 +1086,11 @@ class RayPPOTrainer:
 
         print(f"Setting global step to {self.global_steps}")
         print(f"Resuming from {global_step_folder}")
+
+        completion_manifest_path = os.path.join(global_step_folder, "checkpoint_complete.json")
+        with open(completion_manifest_path) as handle:
+            completion_manifest = json.load(handle)
+        self.resume_epoch = int(completion_manifest.get("epoch", 0))
 
         actor_path = os.path.join(global_step_folder, "actor")
         critic_path = os.path.join(global_step_folder, "critic")
@@ -1109,9 +1171,20 @@ class RayPPOTrainer:
         )
 
         self.global_steps = 0
+        self.resume_epoch = 0
 
         # load checkpoint before doing anything
         self._load_checkpoint()
+
+        if self.reward_trace_recorder is not None:
+            self.reward_trace_recorder.reconcile_to_checkpoint(self.global_steps)
+        if self.global_steps > self.total_training_steps:
+            raise RuntimeError(
+                f"Checkpoint step {self.global_steps} exceeds configured total {self.total_training_steps}"
+            )
+        if self.global_steps == self.total_training_steps:
+            print(f"Checkpoint already reached terminal step {self.total_training_steps}; no update is required")
+            return
 
         # perform validation before training
         # currently, we only support validation using the reward_function.
@@ -1131,7 +1204,7 @@ class RayPPOTrainer:
         last_val_metrics = None
         self.max_steps_duration = 0
 
-        for epoch in range(self.config.trainer.total_epochs):
+        for epoch in range(self.resume_epoch, self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
                 # 打印 batch_dict 的 keys，确认图片字段名
                 # print("+" * 20)
@@ -1407,7 +1480,7 @@ class RayPPOTrainer:
                         if esi_close_to_expiration:
                             print("Force saving checkpoint: ESI instance expiration approaching.")
                         with marked_timer("save_checkpoint", timing_raw, color="green"):
-                            self._save_checkpoint()
+                            self._save_checkpoint(epoch)
 
                 with marked_timer("stop_profile", timing_raw):
                     self._stop_profiling(do_profile)

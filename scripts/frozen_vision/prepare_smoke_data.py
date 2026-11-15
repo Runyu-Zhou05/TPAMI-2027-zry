@@ -4,13 +4,13 @@
 import argparse
 import os
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
 from fve_runtime import DEFAULT_OUTPUT_ROOT, ROOT, resolve_path
 
 
 def write_prefix(source, output, rows):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
     parquet = pq.ParquetFile(source)
     available_rows = parquet.metadata.num_rows
     if available_rows < rows:

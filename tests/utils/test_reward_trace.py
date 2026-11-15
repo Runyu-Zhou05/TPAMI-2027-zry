@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 import time
 
@@ -60,3 +61,35 @@ def test_reward_trace_records_every_rollout(tmp_path):
             responses=responses,
             reward_computed_at_utc_ns=time.time_ns(),
         )
+
+
+def test_reward_trace_reconciles_uncommitted_steps(tmp_path):
+    batch = SimpleNamespace(
+        non_tensor_batch={
+            "uid": np.array(["a"], dtype=object),
+            "data_source": np.array(["rotation"], dtype=object),
+            "extra_info": np.array([{"index": 1}], dtype=object),
+            "reward_model": np.array([{"ground_truth": "90"}], dtype=object),
+        }
+    )
+    reward = torch.tensor([[1.0]])
+    recorder = RewardTraceRecorder(tmp_path, "rotation", "run-resume")
+    for step in (1, 2, 3):
+        recorder.write_step(
+            batch,
+            reward,
+            global_step=step,
+            epoch=0,
+            responses=["<answer>90</answer>"],
+            reward_computed_at_utc_ns=time.time_ns(),
+        )
+
+    quarantine = recorder.reconcile_to_checkpoint(1)
+    assert (recorder.task_dir / "step_00000001.parquet").is_file()
+    assert not (recorder.task_dir / "step_00000002.parquet").exists()
+    assert not (recorder.task_dir / "step_00000003.parquet").exists()
+    assert (quarantine / "step_00000002.parquet").is_file()
+    assert (quarantine / "step_00000003.parquet").is_file()
+    manifest = json.loads((quarantine / "rollback_manifest.json").read_text())
+    assert manifest["committed_step"] == 1
+    assert [item["step"] for item in manifest["traces"]] == [2, 3]

@@ -337,6 +337,22 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
                 visual_module.requires_grad_(False)
                 frozen_visual_params = sum(parameter.numel() for parameter in visual_module.parameters())
                 trainable_params = sum(parameter.numel() for parameter in actor_module.parameters() if parameter.requires_grad)
+                total_params = sum(parameter.numel() for parameter in actor_module.parameters())
+                model_type = getattr(actor_module.config, "model_type", None)
+                expected = {
+                    "model_type": "qwen2_5_vl",
+                    "frozen_visual_params": 668_684_288,
+                    "trainable_params": 3_085_938_688,
+                    "total_params": 3_754_622_976,
+                }
+                actual = {
+                    "model_type": model_type,
+                    "frozen_visual_params": frozen_visual_params,
+                    "trainable_params": trainable_params,
+                    "total_params": total_params,
+                }
+                if actual != expected:
+                    raise ValueError(f"Frozen-vision model identity mismatch: expected={expected}, actual={actual}")
                 if self.rank == 0:
                     print(
                         "Frozen vision encoder audit: "

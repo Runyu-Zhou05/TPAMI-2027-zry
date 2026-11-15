@@ -18,19 +18,21 @@ DATASETS = {
     "MMBench_DEV_EN_V11": {
         "url": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_DEV_EN_V11.tsv",
         "md5": "30c05be8f2f347a50be25aa067248184",
+        "curl_insecure": True,
     },
     "SEEDBench_IMG": {
         "url": "https://opencompass.openxlab.space/utils/benchmarks/SEEDBench/SEEDBench_IMG.tsv",
         "md5": "68017231464752261a2526d6ca3a10c0",
+        "curl_insecure": True,
     },
     "VStarBench": {
         "url": "https://huggingface.co/datasets/xjtupanda/VStar_Bench/resolve/main/VStarBench.tsv",
         "md5": "b18854d7075574be06b631cd5f7d2d6a",
     },
     "RealWorldQA": {
-        # The OpenCompass certificate has expired as of 2026-11-15. curl is
-        # allowed to bypass TLS only for this file because the official MD5 is
-        # pinned and checked before publication.
+        # The OpenCompass certificate has expired as of 2026-11-15. curl may
+        # bypass TLS for OpenCompass-hosted files only because every official
+        # MD5 is pinned and checked before publication.
         "url": "https://opencompass.openxlab.space/utils/VLMEval/RealWorldQA.tsv",
         "md5": "4de008f55dc4fd008ca9e15321dc44b7",
         "curl_insecure": True,
@@ -38,6 +40,7 @@ DATASETS = {
     "BLINK": {
         "url": "https://opencompass.openxlab.space/utils/VLMEval/BLINK.tsv",
         "md5": "3b6649b6a662184ea046908e5506260e",
+        "curl_insecure": True,
     },
     "MME-RealWorld-Lite": {
         "url": "https://huggingface.co/datasets/yifanzhang114/MME-RealWorld-Base64/resolve/main/mme_realworld_lite.tsv",

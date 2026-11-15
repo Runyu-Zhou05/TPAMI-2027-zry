@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -30,6 +31,38 @@ class RewardTraceRecorder:
             raise ValueError("Reward trace run_id must be non-empty")
         self.task_dir = self.root_dir / self.task_name
         self.task_dir.mkdir(parents=True, exist_ok=True)
+
+    def reconcile_to_checkpoint(self, committed_step):
+        committed_step = int(committed_step)
+        rolled_back = []
+        pattern = re.compile(r"step_(\d{8})\.parquet(?:\.tmp)?$")
+        for path in sorted(self.task_dir.glob("step_*.parquet*")):
+            match = pattern.fullmatch(path.name)
+            if match is None:
+                continue
+            step = int(match.group(1))
+            if step > committed_step:
+                rolled_back.append((step, path))
+        if not rolled_back:
+            return None
+
+        quarantine = self.task_dir / "rolled_back" / f"checkpoint_{committed_step:08d}_{time.time_ns()}"
+        quarantine.mkdir(parents=True, exist_ok=False)
+        moved = []
+        for step, source in rolled_back:
+            destination = quarantine / source.name
+            os.replace(source, destination)
+            moved.append({"step": step, "source": str(source), "quarantined_as": str(destination)})
+        manifest = {
+            "committed_step": committed_step,
+            "reconciled_at_utc_ns": time.time_ns(),
+            "run_id": self.run_id,
+            "task": self.task_name,
+            "traces": moved,
+        }
+        (quarantine / "rollback_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        print(f"Quarantined {len(moved)} reward traces beyond committed step {committed_step}: {quarantine}")
+        return quarantine
 
     def write_step(self, batch, reward_tensor, global_step, epoch, responses, reward_computed_at_utc_ns):
         raw_rewards = reward_tensor.sum(-1).detach().float().cpu().numpy()

@@ -106,7 +106,7 @@ Run these checks inside the final image, with the selected environment first on
 1. Confirm versions and H20 kernel coverage:
 
    ```bash
-   python -c "import torch,vllm,tensordict,transformers,ray; print(torch.__version__,torch.version.cuda,torch.cuda.get_arch_list()); print(vllm.__version__,tensordict.__version__,transformers.__version__,ray.__version__); assert 'sm_90' in torch.cuda.get_arch_list()"
+   python scripts/frozen_vision/check_environment.py
    ```
 
 2. Run a real CUDA operation on every visible GPU, not just an import:
@@ -144,6 +144,8 @@ gates.
 - Base model: Qwen2.5-VL-3B-Instruct.
 - The only supported SSL4RL task is Rotation, backed by
   `MMBench_RotationQA_90degree/{train.parquet,test.parquet}`.
+- Optimize on `train.parquet` only. Reserve `test.parquet` exclusively for
+  validation; never concatenate it into `data.train_files`.
 - Freeze the complete `visual.*` module, including the merger.
 - Keep `actor.fsdp_config.use_orig_params=True`.
 - Expected parameters with the real checkpoint: 668,684,288 frozen visual;
@@ -281,7 +283,8 @@ subtasks into the paper's Table II columns.
 
 Use a new explicit run ID. The queue must pass Rotation `quick`,
 `quick-resume`, and `production-smoke`, in order, before the single Rotation
-training stage starts.
+training stage starts. It reruns the exact dependency-version/H20-kernel gate
+and records the validated environment in its atomic completion manifest.
 
 ```bash
 python scripts/frozen_vision/run_queue.py --gpus 0,1,2,3,4,5,6,7 --run-id <unique-run-id>
@@ -311,7 +314,7 @@ reuses the pinned VLMEvalKit environment, runs the same 24-sample MMBench
 smoke, and writes:
 
 ```text
-$FVE_OUTPUT_ROOT/evaluation/post_training/<training-run-id>/
+$FVE_OUTPUT_ROOT/evaluation/post_training/<training-run-id>/<attempt-fingerprint>/
   export_result.json
   mmbench_smoke.log
   mmbench_smoke/
@@ -343,41 +346,78 @@ parameters (`temperature=0.01`, `top-p=0.001`, `top-k=1`):
 ```bash
 python scripts/evaluation/run_six_benchmarks.py \
   --model-path "$FVE_MODEL_PATH" --model-name Base \
+  --model-role base \
   --run-id <training-run-id> --gpu <one-gpu-index> \
   --output-root "$FVE_OUTPUT_ROOT"
 
 python scripts/evaluation/run_six_benchmarks.py \
   --model-path <exported-hf-model> --model-name Rotation \
+  --model-role rotation \
   --run-id <training-run-id> --gpu <one-gpu-index> \
   --output-root "$FVE_OUTPUT_ROOT"
 ```
 
-Generate Table I plus the MMBench and SEED-Bench detail tables:
+The runner writes each immutable attempt below a model/data/evaluator/config
+fingerprint. Keep the exact manifest paths printed by the two commands.
+
+Create the paper's deterministic 60/40 split and evaluate both models on the
+same 40% held-out MMBench and SEED rows. MMBench is split by complete four-row
+circular groups; SEED is split by rows within each category. The paper does not
+publish its random seed, so this repository declares seed 42 and records every
+train/held-out index and checksum instead of implying that an unknown split was
+recovered.
+
+```bash
+python scripts/evaluation/prepare_detail_splits.py \
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" \
+  --output-dir "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40"
+
+python scripts/evaluation/run_detail_benchmarks.py \
+  --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --split-manifest "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40/detail_split_manifest.json" \
+  --output-root "$FVE_OUTPUT_ROOT"
+
+python scripts/evaluation/run_detail_benchmarks.py \
+  --model-path <exported-hf-model> --model-name Rotation --model-role rotation \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --split-manifest "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40/detail_split_manifest.json" \
+  --output-root "$FVE_OUTPUT_ROOT"
+```
+
+Generate Table I plus held-out MMBench and SEED-Bench detail tables. Use the
+exact fingerprinted manifests printed by the runners:
 
 ```bash
 python scripts/evaluation/aggregate_paper_tables.py \
-  --base-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Base/six_benchmark_run_manifest.json" \
-  --rotation-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Rotation/six_benchmark_run_manifest.json" \
+  --base-manifest <base-full-manifest> \
+  --rotation-manifest <rotation-full-manifest> \
+  --base-detail-manifest <base-detail-manifest> \
+  --rotation-detail-manifest <rotation-detail-manifest> \
   --output-dir "$FVE_OUTPUT_ROOT/evaluation/tables/<training-run-id>"
 ```
 
-The screenshot containing Golden-3B uses separate 60/40 held-out MMBench and
-SEED-Bench detail runs; those detail averages are not identical to Table I.
-When reproducing that protocol, pass the four explicit `--*-detail` score-file
-overrides supported by `aggregate_paper_tables.py`. Never substitute the
-Table I aggregate for a held-out detail score.
+The aggregator accepts either no detail manifests or a complete compatible
+Base/Rotation pair. It rejects naked score CSVs, one-sided overrides, changed
+scores, different held-out rows, model swaps, and protocol mismatches. Never
+substitute the Table I full-benchmark aggregate for a held-out detail score.
 
 Finally create a checksum sidecar and compressed, curated result bundle. Large
-checkpoints, datasets, and per-step reward Parquets are inventoried rather than
-duplicated; tables, predictions, score artifacts, logs, and manifests are
-included.
+checkpoints, datasets, and per-step reward Parquets are stream-hashed and
+inventoried rather than duplicated; tables, predictions, score artifacts, logs,
+and manifests are included. Packaging fails unless queue completion, the final
+committed checkpoint, reward summary, post-training smoke/export, Rotation data,
+full evaluations, detail lineage, and table inputs all agree.
 
 ```bash
 python scripts/evaluation/package_final_results.py \
   --run-id <training-run-id> \
   --training-run-dir "$FVE_OUTPUT_ROOT/runs/<training-run-id>" \
-  --base-eval-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Base/six_benchmark_run_manifest.json" \
-  --rotation-eval-manifest "$FVE_OUTPUT_ROOT/evaluation/full/<training-run-id>/Rotation/six_benchmark_run_manifest.json" \
+  --queue-manifest "$FVE_OUTPUT_ROOT/state/<training-run-id>/queue.complete" \
+  --post-training-manifest <post-training-manifest> \
+  --rotation-data-manifest "$FVE_DATA_ROOT/MMBench_RotationQA_90degree/manifest.json" \
+  --base-eval-manifest <base-full-manifest> \
+  --rotation-eval-manifest <rotation-full-manifest> \
   --tables-dir "$FVE_OUTPUT_ROOT/evaluation/tables/<training-run-id>" \
   --output-dir "$FVE_OUTPUT_ROOT/final"
 ```

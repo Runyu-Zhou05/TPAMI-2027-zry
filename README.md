@@ -187,14 +187,15 @@ Follow these steps to reproduce our SSL4RL implementation:
 
 ## 🌊 Inference and Evaluation
 
-We utilize [VLMEvalKit](https://github.com/open-compass/VLMEvalKit/tree/v0.1) to evaluate SSL4RL models.
+We use VLMEvalKit commit `0a11917eede83742389b03d7f11fc252aabdf6ef`
+to evaluate SSL4RL models. The project setup script pins that revision and
+applies the checked Qwen-export and MCQ-prompt compatibility patches.
 
 1. **Install VLMEvalKit**
 
     ```bash
-      git clone https://github.com/open-compass/VLMEvalKit.git
-      cd VLMEvalKit
-      pip install -e .
+      export FVE_EVAL_ROOT="$FVE_OUTPUT_ROOT/tools/vlmevalkit"
+      bash scripts/evaluation/setup_vlmevalkit.sh "$FVE_EVAL_ROOT"
     ```
 
 2. **Customize Prompt**
@@ -213,7 +214,7 @@ We utilize [VLMEvalKit](https://github.com/open-compass/VLMEvalKit/tree/v0.1) to
           "ssl4rl_qwen_3b_mmbench_position_step300": {
             "class": "Qwen2VLChat",
             "model_path": "our_models/ssl4rl_qwen_3b_mmbench_position_step300",
-            "min_pixels": 35840,
+            "min_pixels": 1003520,
             "max_pixels": 12845056,
             "use_custom_prompt": false
           }
@@ -221,11 +222,14 @@ We utilize [VLMEvalKit](https://github.com/open-compass/VLMEvalKit/tree/v0.1) to
         "data": {
           "MMBench": {
             "class": "ImageMCQDataset",
-            "dataset": "MMBench_DEV_EN"
+            "dataset": "MMBench_DEV_EN_V11"
           }
         }
       }
     ```
+
+    `min_pixels` is `1280 * 28 * 28 = 1,003,520`. The earlier value `35840`
+    omitted one `* 28` factor and was a documentation typo.
 
 4. **Run Evaluation**
 

@@ -2,17 +2,141 @@
 """Run Rotation FVE smoke gates followed by Rotation training."""
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fve_runtime import DEFAULT_OUTPUT_ROOT, DEFAULT_RAY_TMP_ROOT, ROOT, default_run_id, resolve_path, stage_layout, validate_run_id
+from check_environment import validate_environment
+from fve_runtime import (
+    DEFAULT_OUTPUT_ROOT,
+    DEFAULT_RAY_TMP_ROOT,
+    ROOT,
+    default_run_id,
+    resolve_path,
+    stage_layout,
+    validate_base_model_identity,
+    validate_run_id,
+)
 
 
 RUNNER = ROOT / "scripts/frozen_vision/run_frozen_vision.py"
 SUMMARY = ROOT / "scripts/frozen_vision/summarize_rewards.py"
+ENVIRONMENT_CHECK = ROOT / "scripts/frozen_vision/check_environment.py"
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def atomic_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
+def required_file(path, label):
+    if not path.is_file():
+        raise SystemExit(f"Missing {label}: {path}")
+    return {"bytes": path.stat().st_size, "path": str(path), "sha256": sha256_file(path)}
+
+
+def validate_file_record(record, label):
+    if not isinstance(record, dict):
+        raise SystemExit(f"Queue completion marker lacks {label}")
+    path = Path(record.get("path", "")).expanduser().resolve()
+    if (
+        not path.is_file()
+        or path.stat().st_size != int(record.get("bytes", -1))
+        or sha256_file(path) != record.get("sha256")
+    ):
+        raise SystemExit(f"Queue completion marker references changed {label}: {path}")
+    return path
+
+
+def validate_completed_marker(completed, run_id, expected_fingerprint=None):
+    if (
+        completed.get("schema_version") != 1
+        or completed.get("status") != "complete"
+        or completed.get("run_id") != run_id
+        or (expected_fingerprint is not None and completed.get("invocation_fingerprint") != expected_fingerprint)
+    ):
+        raise SystemExit("Queue completion marker identity does not match this invocation")
+    stages = completed.get("stages", [])
+    if [stage.get("mode") for stage in stages] != ["quick", "quick-resume", "production-smoke", "train"]:
+        raise SystemExit("Queue completion marker has an incomplete stage sequence")
+    for stage in stages:
+        if stage.get("task") != "rotation":
+            raise SystemExit("Queue completion marker contains a non-Rotation stage")
+        validate_file_record(stage.get("checkpoint", {}).get("completion_manifest"), "checkpoint manifest")
+        validate_file_record(stage.get("checkpoint", {}).get("tracker"), "checkpoint tracker")
+        validate_file_record(stage.get("reward_summary"), "reward summary")
+    return completed
+
+
+def invocation_provenance(args, output_root, run_id, data_root, smoke_data_root, ray_tmp_root, stages):
+    model_path = resolve_path(args.model_path)
+    model_identity = validate_base_model_identity(model_path)
+    dataset_dir = data_root / "MMBench_RotationQA_90degree"
+    provenance = {
+        "data_manifest": required_file(dataset_dir / "manifest.json", "Rotation data manifest"),
+        "environment": validate_environment(),
+        "gpus": [value.strip() for value in args.gpus.split(",") if value.strip()],
+        "minimum_free_disk_gib": args.minimum_free_disk_gib,
+        "model_config": required_file(model_path / "config.json", "base-model config"),
+        "model_revision_metadata": required_file(model_identity["metadata"], "base-model revision metadata"),
+        "model_snapshot": model_identity["files"],
+        "model_path": str(model_path),
+        "output_root": str(output_root),
+        "python": str(resolve_path(args.python_executable)),
+        "ray_tmp_root": str(ray_tmp_root),
+        "run_id": run_id,
+        "scripts": {
+            path.name: required_file(path, f"workflow script {path.name}")
+            for path in (ENVIRONMENT_CHECK, RUNNER, SUMMARY, Path(__file__).resolve())
+        },
+        "smoke_files": {
+            name: required_file(smoke_data_root / name, f"smoke dataset {name}")
+            for name in ("quick.parquet", "production_shape.parquet")
+        },
+        "stages": [{"mode": mode, "task": task} for task, mode in stages],
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return fingerprint, provenance
+
+
+def checkpoint_record(checkpoint_root, mode):
+    tracker = checkpoint_root / "latest_checkpointed_iteration.txt"
+    required_file(tracker, "checkpoint tracker")
+    try:
+        step = int(tracker.read_text())
+    except ValueError as exc:
+        raise SystemExit(f"Malformed checkpoint tracker: {tracker}") from exc
+    stage_tracker = tracker.with_name(f"checkpoint_stage.{mode}.json")
+    atomic_json(stage_tracker, {"global_step": step, "mode": mode})
+    tracker_record = required_file(stage_tracker, "stage checkpoint tracker")
+    manifest_path = checkpoint_root / f"global_step_{step}" / "checkpoint_complete.json"
+    return {
+        "completion_manifest": required_file(manifest_path, "checkpoint completion manifest"),
+        "global_step": step,
+        "root": str(checkpoint_root),
+        "tracker": tracker_record,
+    }
 
 
 def run(command, environment, log_path):
@@ -62,12 +186,6 @@ def main():
     output_root.mkdir(parents=True, exist_ok=True)
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    if complete_marker.exists():
-        print(f"Queue already completed: {complete_marker}")
-        return
-    if failed_marker.exists():
-        raise SystemExit(f"Previous queue failure requires manual review: {failed_marker}")
-
     environment = os.environ.copy()
     environment["CUDA_VISIBLE_DEVICES"] = args.gpus
     stages = [
@@ -76,6 +194,23 @@ def main():
         ("rotation", "production-smoke"),
         ("rotation", "train"),
     ]
+    fingerprint, provenance = invocation_provenance(
+        args, output_root, run_id, data_root, smoke_data_root, ray_tmp_root, stages
+    )
+
+    if complete_marker.exists():
+        try:
+            completed = json.loads(complete_marker.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            raise SystemExit(f"Queue completion marker is corrupt: {complete_marker}") from exc
+        validate_completed_marker(completed, run_id, fingerprint)
+        print(f"Queue already completed and validated: {complete_marker}")
+        return
+    if failed_marker.exists():
+        raise SystemExit(f"Previous queue failure requires manual review: {failed_marker}")
+
+    started_at = datetime.now(timezone.utc).isoformat()
+    stage_records = []
 
     try:
         for task, mode in stages:
@@ -102,13 +237,71 @@ def main():
             finally:
                 cleanup_ray(args.python_executable, environment, logs / "ray_cleanup.log")
             _, run_dir, trace_task = stage_layout(output_root, run_id, task, mode)
-            run([args.python_executable, str(SUMMARY), str(run_dir / "reward_traces" / trace_task)], environment, log_path)
+            expected_rows = 2 * len([value for value in args.gpus.split(",") if value.strip()])
+            if mode not in {"quick", "quick-resume"}:
+                expected_rows = 2560
+            run(
+                [
+                    args.python_executable,
+                    str(SUMMARY),
+                    str(run_dir / "reward_traces" / trace_task),
+                    "--expected-run-id",
+                    run_id,
+                    "--expected-task",
+                    trace_task,
+                    "--expected-rows-per-step",
+                    str(expected_rows),
+                    "--checkpoint-root",
+                    str(run_dir / "checkpoints"),
+                ],
+                environment,
+                log_path,
+            )
+            summary_path = run_dir / "reward_traces" / trace_task / "summary.json"
+            stage_summary_path = summary_path.with_name(f"summary.{mode}.json")
+            try:
+                summary_payload = json.loads(summary_path.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                raise SystemExit(f"Malformed reward summary: {summary_path}") from exc
+            atomic_json(stage_summary_path, summary_payload)
+            stage_records.append(
+                {
+                    "checkpoint": checkpoint_record(run_dir / "checkpoints", mode),
+                    "mode": mode,
+                    "reward_summary": required_file(stage_summary_path, "stage reward summary"),
+                    "run_dir": str(run_dir),
+                    "task": task,
+                }
+            )
     except BaseException as exc:
-        failed_marker.write_text(f"{type(exc).__name__}: {exc}\n")
+        atomic_json(
+            failed_marker,
+            {
+                "error": f"{type(exc).__name__}: {exc}",
+                "failed_at_utc": datetime.now(timezone.utc).isoformat(),
+                "invocation_fingerprint": fingerprint,
+                "run_id": run_id,
+                "schema_version": 1,
+                "stages_completed": stage_records,
+                "status": "failed",
+            },
+        )
         raise
     else:
         failed_marker.unlink(missing_ok=True)
-        complete_marker.write_text("FVE_QUEUE_COMPLETE\n")
+        atomic_json(
+            complete_marker,
+            {
+                "completed_at_utc": datetime.now(timezone.utc).isoformat(),
+                "invocation_fingerprint": fingerprint,
+                "invocation_provenance": provenance,
+                "run_id": run_id,
+                "schema_version": 1,
+                "stages": stage_records,
+                "started_at_utc": started_at,
+                "status": "complete",
+            },
+        )
         print(f"FVE_QUEUE_COMPLETE: {complete_marker}")
 
 

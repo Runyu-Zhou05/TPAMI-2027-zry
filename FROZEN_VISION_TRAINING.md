@@ -28,7 +28,7 @@ For a run ID `fve-...`, durable output has this layout:
 <output-root>/
   cache/huggingface/
   smoke_data/
-  state/<run-id>/{queue.complete,queue.failed}
+  state/<run-id>/{queue.complete,queue.failed}  # atomic JSON attempt state
   state/watcher.lock
   runs/<run-id>/<experiment>/
     checkpoints/
@@ -104,6 +104,14 @@ so would change optimization semantics. The launcher therefore retains the
 8-GPU exact-equivalence configuration and keeps vLLM memory utilization at
 0.6 until an 8-GPU production-shape smoke test establishes actual headroom.
 
+Production optimization reads only
+`MMBench_RotationQA_90degree/train.parquet`; `test.parquet` is reserved for
+validation and is never concatenated into `data.train_files`.
+Before Ray starts, the launcher revalidates the pinned model revision and the
+complete Rotation data manifest, schema, semantics, and file checksums.
+The guarded queue also enforces the exact dependency family from `AGENTS.md`
+and records it in `state/<run-id>/queue.complete`.
+
 ## Logs, reward traces, and checkpoints
 
 View TensorBoard with:
@@ -127,6 +135,11 @@ python scripts/evaluation/run_post_training_smoke.py \
   --run-id <run-id> \
   --gpu <one-gpu-index>
 ```
+
+The post-training manifest is published under the fingerprinted directory
+`$FVE_OUTPUT_ROOT/evaluation/post_training/<run-id>/<fingerprint>` only after a
+committed checkpoint exports and passes the MMBench smoke. Existing attempts
+are never overwritten; `--resume` accepts only an identical completed attempt.
 
 Every completed training step writes an atomic Parquet file containing one row
 per rollout response. Each row records run ID, task, `global_step`, epoch, UID,

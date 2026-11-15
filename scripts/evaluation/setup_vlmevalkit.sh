@@ -8,6 +8,7 @@ SOURCE_DIR="$EVAL_ROOT/VLMEvalKit-$VLMEVAL_COMMIT"
 ENV_DIR="$EVAL_ROOT/env"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 QWEN_PATCHER="$SCRIPT_DIR/patch_vlmeval_qwen.py"
+MCQ_PROMPT_PATCHER="$SCRIPT_DIR/patch_vlmeval_mcq_prompt.py"
 
 mkdir -p "$EVAL_ROOT"
 if [[ ! -d "$SOURCE_DIR" ]]; then
@@ -27,6 +28,7 @@ fi
 if ! grep -q 'FVE patch: exported checkpoints' "$SOURCE_DIR/vlmeval/vlm/qwen2_vl/model.py"; then
   "$BASE_PYTHON" "$QWEN_PATCHER" "$SOURCE_DIR/vlmeval/vlm/qwen2_vl/model.py"
 fi
+"$BASE_PYTHON" "$MCQ_PROMPT_PATCHER" "$SOURCE_DIR/vlmeval/dataset/image_mcq.py"
 
 if [[ ! -x "$ENV_DIR/bin/python" ]]; then
   "$BASE_PYTHON" -m venv --system-site-packages "$ENV_DIR"

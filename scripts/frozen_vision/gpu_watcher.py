@@ -3,13 +3,16 @@
 
 import argparse
 import fcntl
+import json
 import os
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 from fve_runtime import DEFAULT_OUTPUT_ROOT, DEFAULT_RAY_TMP_ROOT, ROOT, default_run_id, resolve_path, validate_run_id
+from run_queue import validate_completed_marker
 
 
 QUEUE = ROOT / "scripts/frozen_vision/run_queue.py"
@@ -76,6 +79,19 @@ def main():
     state_dir.mkdir(parents=True, exist_ok=True)
 
     if complete_marker.exists():
+        try:
+            completed = json.loads(complete_marker.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            raise SystemExit(f"Queue completion marker is corrupt: {complete_marker}") from exc
+        validate_completed_marker(completed, run_id)
+        provenance = completed.get("invocation_provenance", {})
+        if (
+            Path(provenance.get("model_path", "")).expanduser().resolve() != resolve_path(args.model_path)
+            or Path(provenance.get("output_root", "")).expanduser().resolve() != output_root
+            or Path(provenance.get("ray_tmp_root", "")).expanduser().resolve() != ray_tmp_root
+            or Path(provenance.get("data_manifest", {}).get("path", "")).parent != data_root / "MMBench_RotationQA_90degree"
+        ):
+            raise SystemExit(f"Queue completion marker belongs to a different watcher invocation: {complete_marker}")
         print(f"Queue already completed: {complete_marker}")
         return
     if failed_marker.exists():

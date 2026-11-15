@@ -50,6 +50,12 @@ the historical Qwen adapter guessed Qwen2.5 from the directory name. The patch
 uses `config.json` model type and architectures instead, so exported checkpoint
 directories can use arbitrary run and step names.
 
+It also applies the SSL4RL upstream README's MCQ prompt patch, requiring a
+`<think>...</think> <answer>$LETTER</answer>` final response. The README value
+`min_pixels=35840` is treated as a missing-`×28` typo: evaluation keeps the
+Qwen/VLMEvalKit value `1280×28×28 = 1,003,520`; `max_pixels` remains
+`16384×28×28 = 12,845,056`.
+
 ## Validated MMBench smoke on 247
 
 On 2026-11-15, the complete base-model smoke succeeded with:
@@ -140,6 +146,16 @@ resolution, export validation, and MMBench smoke as one guarded command.
 `run_six_benchmarks.py` builds the fixed VLMEvalKit config and refuses success
 unless every benchmark emits an official score artifact.
 
+`prepare_detail_splits.py` implements the paper's downstream-benchmark 60/40
+protocol for Tables II/III. It preserves complete MMBench circular groups,
+stratifies SEED rows by category, fixes seed 42 (the paper does not publish a
+seed), and records exact train/held-out indices, source hashes, subset hashes,
+and the split ID. `run_detail_benchmarks.py` binds each Base/Rotation detail
+attempt to that split and to the same model/evaluator/decoding fingerprints as
+its full run. Held-out TSVs use explicit `_FVE_HELDOUT` custom dataset names;
+reusing official dataset names would trigger VLMEvalKit's full-set MD5/download
+path and invalidate the split.
+
 `aggregate_paper_tables.py` writes CSV, JSON, and LaTeX for:
 
 - Table I: six benchmark scores and their unweighted average;
@@ -147,11 +163,15 @@ unless every benchmark emits an official score artifact.
   Single-Instance, and weighted Overall;
 - Table III: the nine SEED-Bench image dimensions and weighted Overall.
 
-Table II/III score files may be supplied separately from Table I. This is
-required for the paper screenshot's Golden-3B 60/40 held-out comparison, whose
-detail averages differ from the standard full-benchmark scores in Table I.
+Table II/III inputs are paired detail-run manifests, never raw score files. The
+aggregator requires either no detail manifests or a compatible Base/Rotation
+pair with the same run ID, exact split, models, evaluator, and generation
+protocol. This is required for the paper screenshot's Golden-3B 60/40 held-out
+comparison, whose detail averages differ from Table I's full-benchmark scores.
 
 `package_final_results.py` creates a curated `tar.gz`, an SHA256 sidecar, and an
-artifact manifest. It includes tables, predictions, official score files,
-logs, and manifests while inventorying rather than duplicating large datasets,
-checkpoints, TensorBoard files, and per-step reward Parquets.
+artifact manifest only after validating the complete queue/data/checkpoint/
+post-training/evaluation/table lineage. It includes tables, predictions,
+official score files, logs, and manifests while stream-hashing and inventorying
+rather than duplicating large datasets, checkpoints, TensorBoard files, and
+per-step reward Parquets.

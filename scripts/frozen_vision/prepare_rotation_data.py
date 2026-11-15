@@ -104,11 +104,47 @@ def rotated_rect_with_max_area(width: int, height: int, angle: float) -> tuple[i
 
 def validate_dataset(dataset_dir: Path, expect_complete: bool = True) -> dict:
     try:
+        import pyarrow as pa
         import pyarrow.parquet as pq
     except ImportError as exc:
         raise SystemExit("PyArrow is required; build the environment described in AGENTS.md first") from exc
 
     result = {}
+    expected_schema = pa.schema(
+        [
+            pa.field("index", pa.int64()),
+            pa.field("source", pa.string()),
+            pa.field("split", pa.string()),
+            pa.field("height", pa.int64()),
+            pa.field("width", pa.int64()),
+            pa.field(
+                "images",
+                pa.list_(
+                    pa.field("element", pa.struct([pa.field("bytes", pa.binary()), pa.field("path", pa.string())]))
+                ),
+            ),
+            pa.field("data_source", pa.string()),
+            pa.field(
+                "prompt",
+                pa.list_(
+                    pa.field("element", pa.struct([pa.field("content", pa.string()), pa.field("role", pa.string())]))
+                ),
+            ),
+            pa.field("ability", pa.string()),
+            pa.field("reward_model", pa.struct([pa.field("ground_truth", pa.string()), pa.field("style", pa.string())])),
+            pa.field(
+                "extra_info",
+                pa.struct(
+                    [
+                        pa.field("answer", pa.string()),
+                        pa.field("index", pa.int64()),
+                        pa.field("question", pa.string()),
+                        pa.field("split", pa.string()),
+                    ]
+                ),
+            ),
+        ]
+    )
     for filename in ("train.parquet", "test.parquet"):
         path = dataset_dir / filename
         if not path.is_file():
@@ -118,13 +154,34 @@ def validate_dataset(dataset_dir: Path, expect_complete: bool = True) -> dict:
         missing = [name for name in REQUIRED_COLUMNS if name not in columns]
         if missing:
             raise SystemExit(f"{path} is missing required columns: {missing}")
+        if not parquet.schema_arrow.remove_metadata().equals(expected_schema):
+            raise SystemExit(f"{path} has an unexpected Arrow schema: {parquet.schema_arrow}")
         rows = parquet.metadata.num_rows
         if expect_complete and rows != EXPECTED_ROWS[filename]:
             raise SystemExit(f"{path} has {rows} rows; expected {EXPECTED_ROWS[filename]}")
-        first_source = pq.read_table(path, columns=["data_source"]).column(0)[0].as_py()
-        if "RotationQA" not in first_source:
-            raise SystemExit(f"Unexpected data_source in {path}: {first_source!r}")
+        semantic = pq.read_table(path, columns=["data_source", "prompt", "reward_model", "extra_info"])
+        sources = set(semantic["data_source"].to_pylist())
+        if sources != {DATA_SOURCE_LABEL}:
+            raise SystemExit(f"Unexpected data_source values in {path}: {sources}")
+        logical_split = "train" if filename == "train.parquet" else "test"
+        for prompt, reward_model, extra_info in zip(
+            semantic["prompt"].to_pylist(),
+            semantic["reward_model"].to_pylist(),
+            semantic["extra_info"].to_pylist(),
+            strict=True,
+        ):
+            if prompt != [{"content": QUERY_TEMPLATE, "role": "user"}]:
+                raise SystemExit(f"Unexpected prompt in {path}")
+            if reward_model.get("style") != "rule" or reward_model.get("ground_truth") not in {"0", "90", "180", "270"}:
+                raise SystemExit(f"Unexpected reward model entry in {path}: {reward_model}")
+            if extra_info.get("split") != logical_split or extra_info.get("question") != QUERY_TEMPLATE:
+                raise SystemExit(f"Unexpected extra_info entry in {path}: {extra_info}")
         actual_sha256 = sha256_file(path)
+        if expect_complete and actual_sha256 != REFERENCE_SHA256[filename]:
+            raise SystemExit(
+                f"Canonical Rotation checksum mismatch for {path}: "
+                f"expected {REFERENCE_SHA256[filename]}, got {actual_sha256}"
+            )
         result[filename] = {
             "bytes": path.stat().st_size,
             "rows": rows,
@@ -148,6 +205,27 @@ def validate_existing(dataset_dir: Path, expect_complete: bool) -> dict | None:
     manifest = json.loads(manifest_path.read_text())
     if manifest.get("source_dataset") != SOURCE_DATASET or manifest.get("source_revision") != SOURCE_REVISION:
         raise SystemExit(f"Existing manifest does not match the pinned MMBench source: {manifest_path}")
+    expected_manifest = {
+        "complete": expect_complete,
+        "data_source_label": DATA_SOURCE_LABEL,
+        "generator_script_sha256": sha256_file(Path(__file__)),
+        "granularity_degrees": GRANULARITY,
+        "max_rows_per_split": None if expect_complete else manifest.get("max_rows_per_split"),
+        "seed": SEED,
+        "split_mapping": {"test": "train.parquet", "validation": "test.parquet"},
+    }
+    for key, expected_value in expected_manifest.items():
+        if manifest.get(key) != expected_value:
+            raise SystemExit(
+                f"Existing manifest field {key!r} does not match the generator: "
+                f"expected {expected_value!r}, got {manifest.get(key)!r}"
+            )
+    raw_manifest = manifest.get("raw_files", {})
+    if set(raw_manifest) != set(RAW_SHA256):
+        raise SystemExit(f"Existing manifest has unexpected raw files: {sorted(raw_manifest)}")
+    for relative_path, expected_sha256 in RAW_SHA256.items():
+        if raw_manifest[relative_path].get("sha256") != expected_sha256:
+            raise SystemExit(f"Existing manifest has wrong raw checksum for {relative_path}")
     files = validate_dataset(dataset_dir, expect_complete=expect_complete)
     for filename, metadata in files.items():
         recorded = manifest.get("files", {}).get(filename, {}).get("sha256")
@@ -368,6 +446,7 @@ def main() -> None:
             "data_source_label": DATA_SOURCE_LABEL,
             "files": files,
             "generator_git_commit": git_commit(),
+            "generator_script_sha256": sha256_file(Path(__file__)),
             "granularity_degrees": GRANULARITY,
             "max_rows_per_split": args.max_rows_per_split,
             "package_versions": package_versions,

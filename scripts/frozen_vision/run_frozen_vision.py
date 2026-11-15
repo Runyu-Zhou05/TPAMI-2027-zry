@@ -16,6 +16,7 @@ from fve_runtime import (
     resolve_path,
     short_ray_tmpdir,
     stage_layout,
+    validate_base_model_identity,
     validate_run_id,
 )
 
@@ -50,7 +51,10 @@ def main():
             raise SystemExit("--model-path (or FVE_MODEL_PATH) is required for a real launch")
         model_path = "<set --model-path or FVE_MODEL_PATH>"
     else:
-        model_path = str(resolve_path(args.model_path))
+        resolved_model_path = resolve_path(args.model_path)
+        if not args.dry_run:
+            validate_base_model_identity(resolved_model_path)
+        model_path = str(resolved_model_path)
 
     gpu_ids = [value.strip() for value in args.gpus.split(",") if value.strip()]
     gpu_count = len(gpu_ids)
@@ -66,7 +70,13 @@ def main():
 
     train_file = data_root / dataset_dir / "train.parquet"
     test_file = data_root / dataset_dir / "test.parquet"
-    train_files = f"['{train_file}','{test_file}']"
+    if args.mode == "train" and not args.dry_run:
+        # Fail closed before Ray/model startup if the generated Rotation corpus
+        # or its pinned raw-data provenance has changed.
+        from prepare_rotation_data import validate_existing
+
+        validate_existing(data_root / dataset_dir, expect_complete=True)
+    train_files = f"['{train_file}']"
     rollout_n = 5
     train_batch_size = 512
     ppo_mini_batch_size = 128

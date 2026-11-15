@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
+import json
 import os
 import random
 import shutil
@@ -180,18 +182,78 @@ def find_latest_ckpt_path(path, directory_format="global_step_{}"):
     if path is None:
         return None
 
+    def complete_checkpoint(iteration):
+        ckpt_path = os.path.join(path, directory_format.format(iteration))
+        manifest_path = os.path.join(ckpt_path, "checkpoint_complete.json")
+        if not os.path.isfile(manifest_path):
+            return None
+        try:
+            with open(manifest_path) as handle:
+                manifest = json.load(handle)
+            if manifest.get("schema_version") != 2 or int(manifest["global_step"]) != int(iteration):
+                return None
+            for section, root_name in (("actor_files", "actor"), ("critic_files", "critic")):
+                for entry in manifest.get(section, []):
+                    file_path = os.path.join(ckpt_path, root_name, entry["path"])
+                    if not os.path.isfile(file_path) or os.path.getsize(file_path) != int(entry["bytes"]):
+                        return None
+                    digest = hashlib.sha256()
+                    with open(file_path, "rb") as file_handle:
+                        for block in iter(lambda: file_handle.read(8 * 1024 * 1024), b""):
+                            digest.update(block)
+                    if digest.hexdigest() != entry.get("sha256"):
+                        return None
+            data_entry = manifest["dataloader"]
+            data_path = os.path.join(ckpt_path, data_entry["path"])
+            if not os.path.isfile(data_path) or os.path.getsize(data_path) != int(data_entry["bytes"]):
+                return None
+            digest = hashlib.sha256()
+            with open(data_path, "rb") as file_handle:
+                for block in iter(lambda: file_handle.read(8 * 1024 * 1024), b""):
+                    digest.update(block)
+            if digest.hexdigest() != data_entry.get("sha256"):
+                return None
+            return ckpt_path
+        except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError):
+            return None
+
     tracker_file = get_checkpoint_tracker_filename(path)
-    if not os.path.exists(tracker_file):
+    tracker_invalid = False
+    if os.path.exists(tracker_file):
+        try:
+            with open(tracker_file, "rb") as f:
+                iteration = int(f.read().decode())
+            ckpt_path = complete_checkpoint(iteration)
+            if ckpt_path is not None:
+                print("Found checkpoint: %s", ckpt_path)
+                return ckpt_path
+            print(f"Tracked checkpoint is incomplete: {iteration}")
+            tracker_invalid = True
+        except (OSError, UnicodeDecodeError, ValueError):
+            print(f"Checkpoint tracker is malformed: {tracker_file}")
+            tracker_invalid = True
+    else:
         print(f"Checkpoint tracker file does not exist: {tracker_file}")
-        return None
 
-    with open(tracker_file, "rb") as f:
-        iteration = int(f.read().decode())
-    ckpt_path = os.path.join(path, directory_format.format(iteration))
-    if not os.path.exists(ckpt_path):
-        print("Checkpoint does not exist: %s", ckpt_path)
+    candidates = []
+    if os.path.isdir(path):
+        for name in os.listdir(path):
+            if not name.startswith("global_step_"):
+                continue
+            try:
+                iteration = int(name.removeprefix("global_step_"))
+            except ValueError:
+                continue
+            if complete_checkpoint(iteration) is not None:
+                candidates.append(iteration)
+    if not candidates:
+        checkpoint_dirs = bool(
+            os.path.isdir(path) and any(name.startswith("global_step_") for name in os.listdir(path))
+        )
+        if tracker_invalid or checkpoint_dirs:
+            raise RuntimeError(f"Checkpoint state exists but no complete checkpoint can be recovered under {path}")
         return None
-
+    ckpt_path = complete_checkpoint(max(candidates))
     print("Found checkpoint: %s", ckpt_path)
     return ckpt_path
 
