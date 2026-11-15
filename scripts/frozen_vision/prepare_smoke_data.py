@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create deterministic FVE smoke datasets outside the source checkout."""
+"""Create deterministic Rotation FVE smoke datasets outside the checkout."""
 
 import argparse
 import os
@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--output-root", default=os.environ.get("FVE_OUTPUT_ROOT", str(DEFAULT_OUTPUT_ROOT)))
     args = parser.parse_args()
 
-    source = resolve_path(args.data_root) / "MMBench-PositionQA" / "train.parquet"
+    source = resolve_path(args.data_root) / "MMBench_RotationQA_90degree" / "train.parquet"
     output = resolve_path(args.output_root) / "smoke_data"
     # Ten examples support every currently allowed quick-smoke GPU count.
     write_prefix(source, output / "quick.parquet", 10)

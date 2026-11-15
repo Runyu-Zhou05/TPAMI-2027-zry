@@ -2,10 +2,11 @@
 
 ## Scope and objective
 
-This checkout contains the Frozen Vision Encoder (FVE) GRPO workflow built on
-SSL4RL and the bundled `verl 0.4.1.dev` source. The immediate deployment target
-is one Linux job with 8 NVIDIA H20 GPUs (compute capability `sm_90`) and a
-durable output root at:
+This checkout contains the Rotation-only Frozen Vision Encoder (FVE) GRPO
+workflow built on SSL4RL and the bundled `verl 0.4.1.dev` source. Position,
+Jigsaw, and Contrastive are out of scope. The immediate deployment target is
+one Linux job with 8 NVIDIA H20 GPUs (compute capability `sm_90`) and a durable
+output root at:
 
 ```text
 /mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-search/ai-search/jzzhang/runyv
@@ -141,6 +142,8 @@ gates.
 ## FVE runtime invariants
 
 - Base model: Qwen2.5-VL-3B-Instruct.
+- The only supported SSL4RL task is Rotation, backed by
+  `MMBench_RotationQA_90degree/{train.parquet,test.parquet}`.
 - Freeze the complete `visual.*` module, including the merger.
 - Keep `actor.fsdp_config.use_orig_params=True`.
 - Expected parameters with the real checkpoint: 668,684,288 frozen visual;
@@ -167,12 +170,12 @@ python scripts/frozen_vision/prepare_smoke_data.py
 Then run a dry-run and inspect the printed paths and batch values:
 
 ```bash
-python scripts/frozen_vision/run_frozen_vision.py --task position --mode train --gpus 0,1,2,3,4,5,6,7 --run-id h20-config-check --dry-run
+python scripts/frozen_vision/run_frozen_vision.py --task rotation --mode train --gpus 0,1,2,3,4,5,6,7 --run-id h20-config-check --dry-run
 ```
 
-Finally, use a new explicit run ID and execute the queue. It must pass, in
-order, `quick`, `quick-resume`, and `production-smoke` before any of the four
-full training tasks starts:
+Finally, use a new explicit run ID and execute the queue. It must pass Rotation
+`quick`, `quick-resume`, and `production-smoke`, in order, before the single
+Rotation training stage starts:
 
 ```bash
 python scripts/frozen_vision/run_queue.py --gpus 0,1,2,3,4,5,6,7 --run-id <unique-run-id>

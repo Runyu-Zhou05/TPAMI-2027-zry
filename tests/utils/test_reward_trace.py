@@ -11,7 +11,7 @@ def test_reward_trace_records_every_rollout(tmp_path):
     batch = SimpleNamespace(
         non_tensor_batch={
             "uid": np.array(["a", "a", "b", "b"], dtype=object),
-            "data_source": np.array(["position"] * 4, dtype=object),
+            "data_source": np.array(["rotation"] * 4, dtype=object),
             "extra_info": np.array([{"index": 10}, {"index": 10}, {"index": 11}, {"index": 11}], dtype=object),
             "reward_model": np.array(
                 [
@@ -25,10 +25,10 @@ def test_reward_trace_records_every_rollout(tmp_path):
         }
     )
     reward = torch.tensor([[0.0, 1.0], [0.0, 0.0], [0.5, 0.5], [0.0, 0.0]])
-    recorder = RewardTraceRecorder(tmp_path, "position")
+    recorder = RewardTraceRecorder(tmp_path, "rotation")
     metrics = recorder.write_step(batch, reward, global_step=3, epoch=1)
 
-    output = tmp_path / "position/step_00000003.parquet"
+    output = tmp_path / "rotation/step_00000003.parquet"
     table = pq.read_table(output)
     assert table.num_rows == 4
     assert table["raw_reward"].to_pylist() == [1.0, 0.0, 1.0, 0.0]

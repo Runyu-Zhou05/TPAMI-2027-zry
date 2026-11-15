@@ -3,11 +3,13 @@
 ## Portable runtime contract
 
 FVE freezes the full `visual.*` module, including the visual merger, and trains
-the remaining language-side parameters with GRPO. The launcher requires the
+the remaining language-side parameters with GRPO on the Rotation task only.
+Position, Jigsaw, and Contrastive are out of scope. The launcher requires the
 following machine-specific inputs:
 
 - `--model-path`: local model directory for `Qwen2.5-VL-3B-Instruct`;
-- `--data-root`: directory containing the four `MMBench-*` dataset folders;
+- `--data-root`: directory containing
+  `MMBench_RotationQA_90degree/{train.parquet,test.parquet}`;
 - `--output-root`: durable location for all generated artifacts.
 
 The default output root is:
@@ -51,7 +53,7 @@ export FVE_OUTPUT_ROOT=/mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-search/a
 
 python scripts/frozen_vision/prepare_smoke_data.py
 python scripts/frozen_vision/run_frozen_vision.py \
-  --task position --mode quick --gpus 0,1,2,3,4,5,6,7 \
+  --task rotation --mode quick --gpus 0,1,2,3,4,5,6,7 \
   --run-id h20-smoke-001
 ```
 
@@ -103,7 +105,7 @@ tensorboard --logdir "$FVE_OUTPUT_ROOT/runs"
 Tail a stage log with:
 
 ```bash
-tail -F "$FVE_OUTPUT_ROOT/runs/<run-id>/logs/position_train.log"
+tail -F "$FVE_OUTPUT_ROOT/runs/<run-id>/logs/rotation_train.log"
 ```
 
 Every completed training step writes an atomic Parquet file containing one row

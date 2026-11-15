@@ -13,10 +13,7 @@ DEFAULT_OUTPUT_ROOT = Path("/mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-sea
 DEFAULT_RAY_TMP_ROOT = Path("/tmp/fve-ray")
 
 TASKS = {
-    "position": ("MMBench-PositionQA", "ssl4rl_qwen_3b_mmbench_position_frozen_vision"),
     "rotation": ("MMBench_RotationQA_90degree", "ssl4rl_qwen_3b_mmbench_rotation_frozen_vision"),
-    "jigsaw": ("MMBench-JigsawQA_2x2", "ssl4rl_qwen_3b_mmbench_jigsaw_frozen_vision"),
-    "contrastive": ("MMBench-ContrastiveQA", "ssl4rl_qwen_3b_mmbench_contrastive_frozen_vision"),
 }
 
 

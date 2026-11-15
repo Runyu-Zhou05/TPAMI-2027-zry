@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run FVE smoke gates followed by the four training tasks."""
+"""Run Rotation FVE smoke gates followed by Rotation training."""
 
 import argparse
 import os
@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fve_runtime import DEFAULT_OUTPUT_ROOT, DEFAULT_RAY_TMP_ROOT, ROOT, TASKS, default_run_id, resolve_path, stage_layout, validate_run_id
+from fve_runtime import DEFAULT_OUTPUT_ROOT, DEFAULT_RAY_TMP_ROOT, ROOT, default_run_id, resolve_path, stage_layout, validate_run_id
 
 
 RUNNER = ROOT / "scripts/frozen_vision/run_frozen_vision.py"
@@ -71,10 +71,11 @@ def main():
     environment = os.environ.copy()
     environment["CUDA_VISIBLE_DEVICES"] = args.gpus
     stages = [
-        ("position", "quick"),
-        ("position", "quick-resume"),
-        ("position", "production-smoke"),
-    ] + [(task, "train") for task in TASKS]
+        ("rotation", "quick"),
+        ("rotation", "quick-resume"),
+        ("rotation", "production-smoke"),
+        ("rotation", "train"),
+    ]
 
     try:
         for task, mode in stages:
