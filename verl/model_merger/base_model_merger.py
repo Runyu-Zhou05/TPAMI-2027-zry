@@ -282,15 +282,32 @@ class BaseModelMerger(ABC):
     def save_hf_model_and_tokenizer(self, state_dict: dict[str, torch.Tensor]):
         auto_model_class = self.get_transformers_auto_model_class()
         with init_empty_weights():
-            model = auto_model_class.from_config(
-                self.model_config, torch_dtype=torch.bfloat16, trust_remote_code=self.config.trust_remote_code
-            )
+            # AutoModel.from_config only accepts the config object in the
+            # Transformers version pinned for FVE. Cast the meta-initialized
+            # module explicitly instead of passing the removed torch_dtype
+            # keyword.
+            model = auto_model_class.from_config(self.model_config)
+            model = model.to(dtype=torch.bfloat16)
         model.to_empty(device="cpu")
         model = self.patch_model_generation_config(model)
 
         lora_path = self.save_lora_adapter(state_dict)
         if lora_path:
             print(f"Saving lora adapter to {lora_path}")
+
+        if getattr(self.model_config, "tie_word_embeddings", False):
+            output_key = "lm_head.weight"
+            input_keys = [key for key in state_dict if key.endswith("embed_tokens.weight")]
+            if output_key in state_dict and input_keys:
+                matching_keys = [
+                    key for key in input_keys if torch.equal(state_dict[key], state_dict[output_key])
+                ]
+                if len(matching_keys) != 1:
+                    raise ValueError("Configured tied embeddings differ between input embeddings and lm_head")
+                # FSDP shard merging materializes tied weights as independent
+                # tensors. Keep only the canonical input embedding so the HF
+                # loader can restore the tie without serializing a duplicate.
+                del state_dict[output_key]
 
         print(f"Saving model to {self.config.target_dir}")
         model.save_pretrained(self.config.target_dir, state_dict=state_dict)

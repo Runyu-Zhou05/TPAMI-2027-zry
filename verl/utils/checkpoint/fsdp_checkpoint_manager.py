@@ -319,7 +319,11 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                     raise NotImplementedError(f"Unknown architecture {model_config['architectures']}")
 
                 with init_empty_weights():
-                    save_model = auto_model_cls.from_config(model_config, torch_dtype=torch.bfloat16)
+                    # Transformers 4.55 AutoModel.from_config accepts only the
+                    # config object. Cast while parameters are still on meta
+                    # before materializing the empty CPU module.
+                    save_model = auto_model_cls.from_config(model_config)
+                    save_model = save_model.to(dtype=torch.bfloat16)
                 save_model.to_empty(device="cpu")
 
                 if save_model.can_generate():
@@ -330,6 +334,19 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                             f"Warning: {self.__class__.__name__}.save_checkpoint: Generation config file not found "
                             f"in, using a generation config created from the model config when saving hf_model."
                         )
+
+                if getattr(model_config, "tie_word_embeddings", False):
+                    output_key = "lm_head.weight"
+                    input_keys = [key for key in state_dict if key.endswith("embed_tokens.weight")]
+                    if output_key in state_dict and input_keys:
+                        matching_keys = [
+                            key for key in input_keys if torch.equal(state_dict[key], state_dict[output_key])
+                        ]
+                        if len(matching_keys) != 1:
+                            raise ValueError(
+                                "Configured tied embeddings differ between input embeddings and lm_head"
+                            )
+                        del state_dict[output_key]
 
                 save_model.save_pretrained(hf_local_path, state_dict=state_dict)
                 log_with_rank(

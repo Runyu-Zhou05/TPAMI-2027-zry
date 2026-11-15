@@ -118,6 +118,16 @@ Tail a stage log with:
 tail -F "$FVE_OUTPUT_ROOT/runs/<run-id>/logs/rotation_train.log"
 ```
 
+After the queue completes, export or validate the latest HF checkpoint and run
+the pinned MMBench smoke in one command:
+
+```bash
+python scripts/evaluation/run_post_training_smoke.py \
+  --checkpoint "$FVE_OUTPUT_ROOT/runs/<run-id>/ssl4rl_qwen_3b_mmbench_rotation_frozen_vision/checkpoints" \
+  --run-id <run-id> \
+  --gpu <one-gpu-index>
+```
+
 Every completed training step writes an atomic Parquet file containing one row
 per rollout response. Each row records task, `global_step`, epoch, UID,
 rollout index, dataset index, source, ground truth, and `raw_reward`. The

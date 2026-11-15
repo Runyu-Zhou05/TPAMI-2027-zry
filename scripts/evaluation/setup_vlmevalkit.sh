@@ -6,6 +6,8 @@ EVAL_ROOT=${1:-"${FVE_OUTPUT_ROOT:?Set FVE_OUTPUT_ROOT}/tools/vlmevalkit"}
 BASE_PYTHON=${FVE_PYTHON:-$(command -v python3)}
 SOURCE_DIR="$EVAL_ROOT/VLMEvalKit-$VLMEVAL_COMMIT"
 ENV_DIR="$EVAL_ROOT/env"
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+QWEN_PATCHER="$SCRIPT_DIR/patch_vlmeval_qwen.py"
 
 mkdir -p "$EVAL_ROOT"
 if [[ ! -d "$SOURCE_DIR" ]]; then
@@ -20,6 +22,10 @@ elif [[ -d "$SOURCE_DIR/.git" ]]; then
 elif [[ ! -f "$SOURCE_DIR/.pinned-commit" ]] || [[ $(<"$SOURCE_DIR/.pinned-commit") != "$VLMEVAL_COMMIT" ]]; then
   echo "Existing VLMEvalKit source is not pinned to $VLMEVAL_COMMIT" >&2
   exit 1
+fi
+
+if ! grep -q 'FVE patch: exported checkpoints' "$SOURCE_DIR/vlmeval/vlm/qwen2_vl/model.py"; then
+  "$BASE_PYTHON" "$QWEN_PATCHER" "$SOURCE_DIR/vlmeval/vlm/qwen2_vl/model.py"
 fi
 
 if [[ ! -x "$ENV_DIR/bin/python" ]]; then

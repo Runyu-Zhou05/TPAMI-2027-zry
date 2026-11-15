@@ -145,6 +145,7 @@ def main():
         "actor_rollout_ref.actor.fsdp_config.use_orig_params=True",
         "actor_rollout_ref.actor.fsdp_config.param_offload=True",
         "actor_rollout_ref.actor.fsdp_config.optimizer_offload=True",
+        "actor_rollout_ref.actor.checkpoint.save_contents=['model','optimizer','extra','hf_model']",
         "actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=20",
         "actor_rollout_ref.rollout.tensor_model_parallel_size=1",
         "actor_rollout_ref.rollout.name=vllm",

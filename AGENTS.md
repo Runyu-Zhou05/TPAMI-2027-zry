@@ -292,6 +292,36 @@ Do not bypass a failed smoke gate. Inspect the corresponding log and
 production-shape smoke completes and the log contains the frozen-vision runtime
 audit confirming no visual gradients and an unchanged visual checksum.
 
+### 9. Export the final checkpoint and repeat the MMBench smoke
+
+FVE checkpoints save both resumable FSDP shards and standard HF weights. The
+exporter validates direct HF weights when present and falls back to merging
+older shard-only checkpoints. It rejects exports unless the model has exactly
+3,754,622,976 total parameters and 668,684,288 visual parameters.
+
+```bash
+python scripts/evaluation/run_post_training_smoke.py \
+  --checkpoint "$FVE_OUTPUT_ROOT/runs/<training-run-id>/ssl4rl_qwen_3b_mmbench_rotation_frozen_vision/checkpoints" \
+  --run-id <training-run-id> \
+  --gpu <one-gpu-index>
+```
+
+This resolves the latest `global_step_*`, exports or validates its HF model,
+reuses the pinned VLMEvalKit environment, runs the same 24-sample MMBench
+smoke, and writes:
+
+```text
+$FVE_OUTPUT_ROOT/evaluation/post_training/<training-run-id>/
+  export_result.json
+  mmbench_smoke.log
+  mmbench_smoke/
+  post_training_manifest.json
+```
+
+Do not start full six-benchmark evaluation unless this post-training manifest
+exists and the exported model passes the same six-subtask smoke as the base
+model.
+
 ## Editing and validation rules
 
 - Keep generated models, datasets, caches, logs, traces, and checkpoints out of
