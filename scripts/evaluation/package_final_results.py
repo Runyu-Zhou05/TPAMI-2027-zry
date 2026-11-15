@@ -96,6 +96,7 @@ def main() -> None:
 
     output_dir.mkdir(parents=True, exist_ok=True)
     archive = output_dir / f"fve_{args.run_id}_results.tar.gz"
+    sidecar = archive.with_suffix(archive.suffix + ".sha256")
     if archive.exists():
         raise SystemExit(f"Refusing to overwrite result archive: {archive}")
 
@@ -118,12 +119,16 @@ def main() -> None:
         shutil.copytree(rotation_eval_dir, bundle / "evaluation" / "rotation", dirs_exist_ok=True)
         shutil.copytree(tables_dir, bundle / "tables", dirs_exist_ok=True)
         (bundle / "artifact_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-        with tarfile.open(archive, "w:gz") as handle:
+        temporary_archive = Path(temporary) / archive.name
+        with tarfile.open(temporary_archive, "w:gz") as handle:
             handle.add(bundle, arcname=bundle.name, recursive=True)
-
-    checksum = sha256_file(archive)
-    sidecar = archive.with_suffix(archive.suffix + ".sha256")
-    sidecar.write_text(f"{checksum}  {archive.name}\n")
+        checksum = sha256_file(temporary_archive)
+        temporary_sidecar = Path(temporary) / sidecar.name
+        temporary_sidecar.write_text(f"{checksum}  {archive.name}\n")
+        # Publish only complete files. Publishing the sidecar first makes an
+        # interrupted attempt retryable because the final archive remains absent.
+        os.replace(temporary_sidecar, sidecar)
+        os.replace(temporary_archive, archive)
     print(json.dumps({"archive": str(archive), "bytes": archive.stat().st_size, "sha256": checksum}, indent=2))
 
 

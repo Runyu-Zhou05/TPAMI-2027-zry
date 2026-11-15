@@ -11,10 +11,17 @@ from fve_runtime import DEFAULT_OUTPUT_ROOT, ROOT, resolve_path
 
 
 def write_prefix(source, output, rows):
-    output.parent.mkdir(parents=True, exist_ok=True)
     parquet = pq.ParquetFile(source)
+    available_rows = parquet.metadata.num_rows
+    if available_rows < rows:
+        raise SystemExit(
+            f"Cannot build {output.name}: requested {rows} rows but {source} contains only {available_rows}"
+        )
     batch = next(parquet.iter_batches(batch_size=rows))
     table = pa.Table.from_batches([batch]).slice(0, rows)
+    if len(table) != rows:
+        raise RuntimeError(f"Internal smoke-data row-count mismatch: requested {rows}, built {len(table)}")
+    output.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(table, output, compression="zstd")
     print(f"wrote {len(table)} rows to {output}")
 
