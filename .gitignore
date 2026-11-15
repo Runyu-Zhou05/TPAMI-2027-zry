@@ -134,6 +134,7 @@ training_logs/
 smoke_data/
 .ray/
 data_build_logs/
+inputs/
 frozen_vision_queue.complete
 frozen_vision_queue.failed
 frozen_vision_watcher.lock

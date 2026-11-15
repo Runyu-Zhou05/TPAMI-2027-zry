@@ -157,25 +157,92 @@ gates.
 
 ## Required execution order on the target job
 
-After model and processed data paths exist:
+Follow this order exactly. Do not start input downloads before the image is
+built and the environment gates above pass.
+
+### 1. Build and validate the environment
+
+Build the image with the validated dependency family, run `pip check`, and run
+all five mandatory environment gates above. Keep the gate output in the job
+log. Stop here if any gate fails.
+
+### 2. Define durable input and output paths
 
 ```bash
-export FVE_MODEL_PATH=/path/to/Qwen2.5-VL-3B-Instruct
-export FVE_DATA_ROOT=/path/to/our_datasets
 export FVE_OUTPUT_ROOT=/mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-search/ai-search/jzzhang/runyv
+export FVE_MODEL_PATH="$FVE_OUTPUT_ROOT/inputs/models/Qwen2.5-VL-3B-Instruct"
+export FVE_DATA_ROOT="$FVE_OUTPUT_ROOT/inputs/datasets"
 export FVE_PYTHON="$(command -v python)"
+mkdir -p "$FVE_OUTPUT_ROOT/inputs/models" "$FVE_DATA_ROOT"
+```
+
+### 3. Download the pinned base model
+
+Download the exact Qwen revision used by this project. Do not use an unpinned
+`main` revision.
+
+```bash
+hf download Qwen/Qwen2.5-VL-3B-Instruct \
+  --revision 66285546d2b821cf421d4f5eb2576359d3770cd3 \
+  --local-dir "$FVE_MODEL_PATH"
+python -c "from transformers import AutoConfig; c=AutoConfig.from_pretrained('$FVE_MODEL_PATH'); print(c.model_type,c.architectures); assert c.model_type=='qwen2_5_vl'"
+```
+
+The expected checkpoint has two safetensors shards with total tensor bytes
+`7,509,245,952`. The real FVE worker performs the authoritative parameter-count
+and frozen-module audit when the smoke run starts.
+
+### 4. Download pinned raw MMBench and generate Rotation data
+
+Run the project-owned data command. It downloads only the raw MMBench README
+and Parquet files at revision
+`215b79e126bea0777a489683f239edd0a6012a8a`, maps raw `test` to training and raw
+`validation` to testing, deterministically generates 90-degree Rotation pairs
+with seed 42, and writes the final RL Parquet schema.
+
+```bash
+python scripts/frozen_vision/prepare_rotation_data.py
+python scripts/frozen_vision/prepare_rotation_data.py --verify-only
+```
+
+The final files must be:
+
+```text
+$FVE_DATA_ROOT/MMBench_RotationQA_90degree/train.parquet  # 6,666 rows
+$FVE_DATA_ROOT/MMBench_RotationQA_90degree/test.parquet   # 4,329 rows
+$FVE_DATA_ROOT/MMBench_RotationQA_90degree/manifest.json
+```
+
+The manifest records the source revision, raw-file hashes, generated-file
+hashes, schema, row counts, package versions, seed, split mapping, and generator
+Git commit. A rerun with a matching manifest validates and reuses the existing
+data. The script refuses to trust pre-existing Parquet files without a matching
+manifest. Do not use `--max-rows-per-split` for training; it is only a bounded
+development test.
+
+### 5. Generate Rotation smoke data
+
+```bash
 python scripts/frozen_vision/prepare_smoke_data.py
 ```
 
-Then run a dry-run and inspect the printed paths and batch values:
+This reads only the generated Rotation training Parquet and writes the quick
+and production-shape subsets below `FVE_OUTPUT_ROOT/smoke_data`.
+
+### 6. Dry-run the 8-GPU production configuration
+
+Inspect the printed input paths, output paths, and batch values. The global
+rollout batch must be 2560 and the global PPO mini-batch must be 640.
 
 ```bash
 python scripts/frozen_vision/run_frozen_vision.py --task rotation --mode train --gpus 0,1,2,3,4,5,6,7 --run-id h20-config-check --dry-run
 ```
 
-Finally, use a new explicit run ID and execute the queue. It must pass Rotation
-`quick`, `quick-resume`, and `production-smoke`, in order, before the single
-Rotation training stage starts:
+### 7. Run the guarded Rotation queue
+
+Use a new explicit run ID. The queue must pass Rotation `quick`,
+`quick-resume`, and `production-smoke`, in order, before the single Rotation
+training stage starts.
 
 ```bash
 python scripts/frozen_vision/run_queue.py --gpus 0,1,2,3,4,5,6,7 --run-id <unique-run-id>

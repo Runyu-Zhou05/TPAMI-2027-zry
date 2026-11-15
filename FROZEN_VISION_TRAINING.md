@@ -44,12 +44,22 @@ not durable experiment outputs.
 
 ## First run on the 8 x H20 141 GiB machine
 
+Build and validate the environment exactly as specified in `AGENTS.md`, then
+download the pinned model and build the pinned Rotation dataset:
+
 ```bash
 cd TPAMI-2027-zry
 
-export FVE_MODEL_PATH=/path/to/Qwen2.5-VL-3B-Instruct
-export FVE_DATA_ROOT=/path/to/our_datasets
 export FVE_OUTPUT_ROOT=/mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-search/ai-search/jzzhang/runyv
+export FVE_MODEL_PATH="$FVE_OUTPUT_ROOT/inputs/models/Qwen2.5-VL-3B-Instruct"
+export FVE_DATA_ROOT="$FVE_OUTPUT_ROOT/inputs/datasets"
+
+mkdir -p "$FVE_OUTPUT_ROOT/inputs/models" "$FVE_DATA_ROOT"
+hf download Qwen/Qwen2.5-VL-3B-Instruct \
+  --revision 66285546d2b821cf421d4f5eb2576359d3770cd3 \
+  --local-dir "$FVE_MODEL_PATH"
+python scripts/frozen_vision/prepare_rotation_data.py
+python scripts/frozen_vision/prepare_rotation_data.py --verify-only
 
 python scripts/frozen_vision/prepare_smoke_data.py
 python scripts/frozen_vision/run_frozen_vision.py \
