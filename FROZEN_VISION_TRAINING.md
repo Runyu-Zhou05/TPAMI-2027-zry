@@ -134,5 +134,9 @@ rollout index, dataset index, source, ground truth, generated response,
 `raw_reward`, reward-computation UTC nanoseconds, and trace-write UTC
 nanoseconds. Existing step files are never overwritten silently.
 
+Hydra configuration snapshots and its job log are written under each
+experiment's `hydra/` directory inside `FVE_OUTPUT_ROOT`; the training command
+must not create a repository-local `outputs/` tree.
+
 See `EVALUATION.md` and `AGENTS.md` for the six-benchmark run, Table I--III
 aggregation, and final result-bundle commands.

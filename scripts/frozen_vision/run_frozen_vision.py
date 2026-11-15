@@ -175,6 +175,7 @@ def main():
         f"trainer.reward_trace_dir={trace_root}",
         f"trainer.reward_trace_task={trace_task}",
         f"trainer.reward_trace_run_id={run_id}",
+        f"hydra.run.dir={run_dir / 'hydra'}",
     ]
 
     environment = os.environ.copy()
