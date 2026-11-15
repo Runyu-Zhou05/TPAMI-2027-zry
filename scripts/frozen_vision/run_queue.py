@@ -25,7 +25,16 @@ def run(command, environment, log_path):
 
 
 def cleanup_ray(python_executable, environment, log_path):
-    run([python_executable, "-m", "ray", "stop", "--force"], environment, log_path)
+    python_path = Path(python_executable).expanduser()
+    if not python_path.is_absolute():
+        resolved_python = shutil.which(python_executable, path=environment.get("PATH"))
+        if resolved_python is None:
+            raise RuntimeError(f"Cannot resolve Python executable: {python_executable}")
+        python_path = Path(resolved_python)
+    ray_executable = python_path.parent / "ray"
+    if not ray_executable.is_file() or not os.access(ray_executable, os.X_OK):
+        raise RuntimeError(f"Ray CLI is not installed next to the selected Python: {ray_executable}")
+    run([str(ray_executable), "stop", "--force"], environment, log_path)
 
 
 def main():
