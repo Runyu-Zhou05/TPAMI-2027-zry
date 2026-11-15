@@ -238,7 +238,46 @@ rollout batch must be 2560 and the global PPO mini-batch must be 640.
 python scripts/frozen_vision/run_frozen_vision.py --task rotation --mode train --gpus 0,1,2,3,4,5,6,7 --run-id h20-config-check --dry-run
 ```
 
-### 7. Run the guarded Rotation queue
+### 7. Validate the post-training evaluation chain before training
+
+Install the pinned VLMEvalKit revision in a separate overlay environment. This
+must not modify the validated FVE training environment. See `EVALUATION.md`
+for the validated 247 smoke evidence and the six-benchmark evaluation scope.
+
+```bash
+export FVE_EVAL_ROOT="$FVE_OUTPUT_ROOT/tools/vlmevalkit"
+bash scripts/evaluation/setup_vlmevalkit.sh "$FVE_EVAL_ROOT"
+```
+
+Choose exactly one GPU with sufficient free memory and run the base-model
+MMBench v1.1 smoke. The wrapper downloads and MD5-validates the labeled
+MMBench TSV when `--source-tsv` is omitted. It selects one complete circular
+group for each of the six Table II subtasks and uses VLMEvalKit's official
+Qwen2.5-VL adapter plus exact-matching evaluator.
+
+```bash
+CUDA_VISIBLE_DEVICES=<one-gpu-index> "$FVE_EVAL_ROOT/env/bin/python" \
+  scripts/evaluation/vlmeval_mmbench_smoke.py \
+  --model-path "$FVE_MODEL_PATH" \
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" \
+  --output-dir "$FVE_OUTPUT_ROOT/evaluation/smoke/mmbench_base_qwen25vl3b"
+```
+
+Require all of the following before starting the long RL queue:
+
+- 24 predictions covering Logical, Relation, Attribute, Coarse, Cross-Inst.,
+  and Single-Inst.;
+- VLMEvalKit prediction, exact-matching result, and accuracy files;
+- `mmbench_v11_smoke_table2.json` with all six subtasks plus Average;
+- `smoke_manifest.json` recording model, GPU, dataset hash, sample indices,
+  Torch/Transformers versions, and VLMEvalKit commit.
+
+Smoke accuracy is not a reportable experiment result. Its purpose is to prove
+that the exact evaluation implementation can load the model, process images,
+write predictions, score complete circular groups, and project the official
+subtasks into the paper's Table II columns.
+
+### 8. Run the guarded Rotation queue
 
 Use a new explicit run ID. The queue must pass Rotation `quick`,
 `quick-resume`, and `production-smoke`, in order, before the single Rotation
