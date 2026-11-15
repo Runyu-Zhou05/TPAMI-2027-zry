@@ -1,0 +1,112 @@
+# Frozen Vision Encoder (FVE) training
+
+## Portable runtime contract
+
+FVE freezes the full `visual.*` module, including the visual merger, and trains
+the remaining language-side parameters with GRPO. The launcher requires the
+following machine-specific inputs:
+
+- `--model-path`: local model directory for `Qwen2.5-VL-3B-Instruct`;
+- `--data-root`: directory containing the four `MMBench-*` dataset folders;
+- `--output-root`: durable location for all generated artifacts.
+
+The default output root is:
+
+```text
+/mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-search/ai-search/jzzhang/runyv
+```
+
+The same values can be supplied as `FVE_MODEL_PATH`, `FVE_DATA_ROOT`, and
+`FVE_OUTPUT_ROOT`. `FVE_PYTHON` optionally selects the Python interpreter.
+No server-specific proxy, Hugging Face endpoint, or Python path is hard-coded.
+
+For a run ID `fve-...`, durable output has this layout:
+
+```text
+<output-root>/
+  cache/huggingface/
+  smoke_data/
+  state/<run-id>/{queue.complete,queue.failed}
+  state/watcher.lock
+  runs/<run-id>/<experiment>/
+    checkpoints/
+    tensorboard/
+    reward_traces/<task>/step_XXXXXXXX.parquet
+  runs/<run-id>/logs/
+```
+
+Ray temporary files use `/tmp/fve-ray` by default, configurable through
+`FVE_RAY_TMP_ROOT` or `--ray-tmp-root`. This path is intentionally short:
+Ray's UNIX-domain sockets have a 107-byte path limit. Ray temporary files are
+not durable experiment outputs.
+
+## First run on the 8 x H20 141 GiB machine
+
+```bash
+cd TPAMI-2027-zry
+
+export FVE_MODEL_PATH=/path/to/Qwen2.5-VL-3B-Instruct
+export FVE_DATA_ROOT=/path/to/our_datasets
+export FVE_OUTPUT_ROOT=/mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-search/ai-search/jzzhang/runyv
+
+python scripts/frozen_vision/prepare_smoke_data.py
+python scripts/frozen_vision/run_frozen_vision.py \
+  --task position --mode quick --gpus 0,1,2,3,4,5,6,7 \
+  --run-id h20-smoke-001
+```
+
+The smoke-data generator writes ten quick examples so that the quick and
+quick-resume gates remain divisible on every supported GPU count, including 8.
+
+After the smoke gates pass, start the full sequence:
+
+```bash
+python scripts/frozen_vision/run_queue.py \
+  --gpus 0,1,2,3,4,5,6,7 \
+  --run-id h20-fve-001
+```
+
+The watcher defaults to waiting for all eight idle GPUs. It is optional on a
+dedicated machine:
+
+```bash
+python scripts/frozen_vision/gpu_watcher.py --run-id h20-fve-001
+```
+
+## Batch invariants for 8 H20 GPUs
+
+Production settings deliberately preserve the existing global batch:
+
+| Quantity | Value |
+|---|---:|
+| Prompt batch | 512 |
+| Rollouts per prompt | 5 |
+| Global rollout responses | 2560 |
+| Global PPO mini-batch | 640 |
+| Per-H20 PPO mini-batch | 80 |
+| Per-H20 micro-batch | 10 |
+| Gradient accumulation per PPO mini-batch | 8 |
+
+The 141 GiB H20 capacity does not by itself justify changing this batch: doing
+so would change optimization semantics. The launcher therefore retains the
+8-GPU exact-equivalence configuration and keeps vLLM memory utilization at
+0.6 until an 8-GPU production-shape smoke test establishes actual headroom.
+
+## Logs, reward traces, and checkpoints
+
+View TensorBoard with:
+
+```bash
+tensorboard --logdir "$FVE_OUTPUT_ROOT/runs"
+```
+
+Tail a stage log with:
+
+```bash
+tail -F "$FVE_OUTPUT_ROOT/runs/<run-id>/logs/position_train.log"
+```
+
+Every completed training step writes an atomic Parquet file containing one row
+per rollout response. Each row records task, `global_step`, epoch, UID,
+rollout index, dataset index, source, ground truth, and `raw_reward`. The
+current trace schema does not yet include a reward-computation timestamp.
