@@ -175,3 +175,65 @@ post-training/evaluation/table lineage. It includes tables, predictions,
 official score files, logs, and manifests while stream-hashing and inventorying
 rather than duplicating large datasets, checkpoints, TensorBoard files, and
 per-step reward Parquets.
+
+## MathVista and MMMU reasoning evaluation
+
+The additional reasoning chain is deliberately separate from Tables I--III. It
+compares the same pinned Base and exported Rotation models on:
+
+- `MathVista_MINI`, the labeled 1,000-example MathVista mini test set supported
+  by the pinned VLMEvalKit;
+- `MMMU_DEV_VAL`, the labeled development/validation set. `MMMU_TEST` is not
+  used because its labels are not locally reportable.
+
+This is chain-of-thought evaluation, not answer-only inference. MathVista gets
+an explicit `<think>...</think>` followed by `<answer>...</answer>` prompt.
+MMMU uses the repository's patched MCQ reasoning prompt with the same tags.
+Every raw response remains in the prediction workbook, and the run manifest
+records non-empty and correctly formatted reasoning coverage.
+
+MathVista's official pinned evaluator requires an auxiliary answer-extraction
+judge. The default is `gpt-4o-mini`; set `OPENAI_API_KEY` (and optionally
+`OPENAI_API_BASE`) or configure VLMEvalKit's `LOCAL_LLM`. MMMU is scored with
+`exact_matching`, so its score does not depend on that judge.
+
+Download and verify both reasoning datasets:
+
+```bash
+python scripts/evaluation/prepare_reasoning_data.py \
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval"
+python scripts/evaluation/prepare_reasoning_data.py \
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" --verify-only
+```
+
+The Rotation model path is the `export.exported_model` value in the successful
+fingerprinted `post_training_manifest.json`; it is never inferred from the
+largest checkpoint directory. Run Base and Rotation with identical settings:
+
+```bash
+python scripts/evaluation/run_reasoning_benchmarks.py \
+  --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+
+python scripts/evaluation/run_reasoning_benchmarks.py \
+  --model-path <export.exported_model> --model-name Rotation --model-role rotation \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+```
+
+Each immutable attempt is written under
+`$FVE_OUTPUT_ROOT/evaluation/reasoning/<run-id>/<model>-<fingerprint>/`.
+Compare only compatible attempts:
+
+```bash
+python scripts/evaluation/aggregate_reasoning_results.py \
+  --base-manifest <base-reasoning-manifest> \
+  --rotation-manifest <rotation-reasoning-manifest> \
+  --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/<training-run-id>"
+```
+
+The resulting CSV/JSON reports MathVista and MMMU percentages, Rotation-minus-
+Base changes, and reasoning-format coverage. The default response budget is
+4,096 tokens and uses deterministic sampling (`temperature=0.01`, `top-p=0.001`,
+`top-k=1`).

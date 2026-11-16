@@ -325,7 +325,7 @@ Do not start full six-benchmark evaluation unless this post-training manifest
 exists and the exported model passes the same six-subtask smoke as the base
 model.
 
-### 10. Run six benchmarks, aggregate the paper tables, and package results
+### 10. Run six benchmarks and aggregate the paper tables
 
 Download and checksum all six paper datasets. The paper protocol is
 MMBench DEV-EN v1.1, the nine image dimensions of SEEDBench_IMG, VStarBench,
@@ -402,7 +402,43 @@ Base/Rotation pair. It rejects naked score CSVs, one-sided overrides, changed
 scores, different held-out rows, model swaps, and protocol mismatches. Never
 substitute the Table I full-benchmark aggregate for a held-out detail score.
 
-Finally create a checksum sidecar and compressed, curated result bundle. Large
+### 11. Run MathVista and MMMU chain-of-thought evaluation
+
+Use `MathVista_MINI` and `MMMU_DEV_VAL`; do not silently substitute unlabeled
+test splits. Both Base and Rotation must use the explicit `<think>...</think>`
+and `<answer>...</answer>` reasoning prompts, 4,096 response tokens, and the
+same deterministic generation settings. Raw reasoning remains in prediction
+workbooks. MathVista requires an auxiliary extraction judge; the default is
+`gpt-4o-mini`, while MMMU uses exact matching.
+
+```bash
+python scripts/evaluation/prepare_reasoning_data.py \
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval"
+
+python scripts/evaluation/run_reasoning_benchmarks.py \
+  --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+
+python scripts/evaluation/run_reasoning_benchmarks.py \
+  --model-path <export.exported_model> --model-name Rotation --model-role rotation \
+  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+
+python scripts/evaluation/aggregate_reasoning_results.py \
+  --base-manifest <base-reasoning-manifest> \
+  --rotation-manifest <rotation-reasoning-manifest> \
+  --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/<training-run-id>"
+```
+
+The authoritative Rotation path is the `export.exported_model` field in the
+fingerprinted post-training manifest. MathVista scoring requires
+`OPENAI_API_KEY` or a configured VLMEvalKit `LOCAL_LLM`. See `EVALUATION.md`
+for provenance and output details.
+
+### 12. Package the paper-table result bundle
+
+Create a checksum sidecar and compressed, curated result bundle. Large
 checkpoints, datasets, and per-step reward Parquets are stream-hashed and
 inventoried rather than duplicated; tables, predictions, score artifacts, logs,
 and manifests are included. Packaging fails unless queue completion, the final

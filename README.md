@@ -191,6 +191,11 @@ We use VLMEvalKit commit `0a11917eede83742389b03d7f11fc252aabdf6ef`
 to evaluate SSL4RL models. The project setup script pins that revision and
 applies the checked Qwen-export and MCQ-prompt compatibility patches.
 
+The portable FVE workflow additionally evaluates chain-of-thought reasoning on
+`MathVista_MINI` and `MMMU_DEV_VAL`. See `EVALUATION.md` and
+`scripts/evaluation/run_reasoning_benchmarks.py`; raw `<think>...</think>`
+responses and final `<answer>...</answer>` outputs are retained for audit.
+
 1. **Install VLMEvalKit**
 
     ```bash

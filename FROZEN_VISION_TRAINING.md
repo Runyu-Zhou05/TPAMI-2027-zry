@@ -140,6 +140,10 @@ The post-training manifest is published under the fingerprinted directory
 `$FVE_OUTPUT_ROOT/evaluation/post_training/<run-id>/<fingerprint>` only after a
 committed checkpoint exports and passes the MMBench smoke. Existing attempts
 are never overwritten; `--resume` accepts only an identical completed attempt.
+Its `export.exported_model` field is the authoritative HF model path for all
+subsequent six-benchmark, MathVista, and MMMU evaluation commands. For a direct
+HF checkpoint this normally ends in `global_step_<N>/actor/huggingface`; for a
+shard merge it normally ends in `exports/global_step_<N>-hf`.
 
 Every completed training step writes an atomic Parquet file containing one row
 per rollout response. Each row records run ID, task, `global_step`, epoch, UID,

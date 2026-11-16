@@ -9,6 +9,7 @@ ENV_DIR="$EVAL_ROOT/env"
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 QWEN_PATCHER="$SCRIPT_DIR/patch_vlmeval_qwen.py"
 MCQ_PROMPT_PATCHER="$SCRIPT_DIR/patch_vlmeval_mcq_prompt.py"
+REASONING_PROMPT_PATCHER="$SCRIPT_DIR/patch_vlmeval_reasoning_prompts.py"
 
 mkdir -p "$EVAL_ROOT"
 if [[ ! -d "$SOURCE_DIR" ]]; then
@@ -29,6 +30,7 @@ if ! grep -q 'FVE patch: exported checkpoints' "$SOURCE_DIR/vlmeval/vlm/qwen2_vl
   "$BASE_PYTHON" "$QWEN_PATCHER" "$SOURCE_DIR/vlmeval/vlm/qwen2_vl/model.py"
 fi
 "$BASE_PYTHON" "$MCQ_PROMPT_PATCHER" "$SOURCE_DIR/vlmeval/dataset/image_mcq.py"
+"$BASE_PYTHON" "$REASONING_PROMPT_PATCHER" "$SOURCE_DIR/vlmeval/dataset/image_vqa.py"
 
 if [[ ! -x "$ENV_DIR/bin/python" ]]; then
   "$BASE_PYTHON" -m venv --system-site-packages "$ENV_DIR"
@@ -53,13 +55,13 @@ import numpy
 import torch
 import transformers
 import vlmeval
-from vlmeval.dataset import ImageMCQDataset
+from vlmeval.dataset import ImageMCQDataset, MathVista, MMMUDataset
 from vlmeval.vlm import Qwen2VLChat
 
 assert numpy.__version__ == "1.26.4"
 assert transformers.__version__ == "4.55.2"
 print({"numpy": numpy.__version__, "torch": torch.__version__, "transformers": transformers.__version__})
-print("VLMEvalKit Qwen2.5-VL and MMBench imports OK")
+print("VLMEvalKit Qwen2.5-VL, MMBench, MathVista, and MMMU imports OK")
 PY
 
 echo "VLMEvalKit environment ready: $ENV_DIR/bin/python"
