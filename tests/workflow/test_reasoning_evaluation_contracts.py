@@ -90,6 +90,35 @@ def build_run(root: Path, role: str, judge: str = "gpt-4o-mini") -> Path:
 
 
 class ReasoningWorkflowTest(unittest.TestCase):
+    def test_deepseek_judge_patch_is_idempotent_and_redacts_keys(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            judge = root / "judge_util.py"
+            wrapper = root / "gpt.py"
+            judge.write_text(
+                "model_map = {\n"
+                "            'deepseek': 'deepseek-ai/DeepSeek-V2.5',\n"
+                "}\n"
+            )
+            wrapper.write_text(
+                "class Wrapper:\n"
+                "    def f(self):\n"
+                "        self.logger.info(f'Using API Base: {self.api_base}; API Key: {self.key}')\n"
+            )
+            command = [
+                sys.executable,
+                str(EVAL / "patch_vlmeval_deepseek_judge.py"),
+                str(judge),
+                str(wrapper),
+            ]
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            first = (judge.read_text(), wrapper.read_text())
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            self.assertEqual((judge.read_text(), wrapper.read_text()), first)
+            self.assertIn("'deepseek-chat': 'deepseek-chat'", first[0])
+            self.assertIn("API Key: ***REDACTED***", first[1])
+            self.assertNotIn("API Key: {self.key}", first[1])
+
     def test_mathvista_reasoning_patch_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "image_vqa.py"
@@ -162,6 +191,8 @@ class ReasoningWorkflowTest(unittest.TestCase):
         runner = (EVAL / "run_reasoning_benchmarks.py").read_text()
         self.assertIn('parser.add_argument("--max-new-tokens", type=int, default=4096)', runner)
         self.assertIn('"MMMU_DEV_VAL": "exact_matching"', runner)
+        self.assertIn('default="deepseek-chat"', runner)
+        self.assertIn("https://api.deepseek.com/chat/completions", runner)
 
 
 if __name__ == "__main__":

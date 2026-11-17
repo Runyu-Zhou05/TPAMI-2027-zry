@@ -10,6 +10,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 QWEN_PATCHER="$SCRIPT_DIR/patch_vlmeval_qwen.py"
 MCQ_PROMPT_PATCHER="$SCRIPT_DIR/patch_vlmeval_mcq_prompt.py"
 REASONING_PROMPT_PATCHER="$SCRIPT_DIR/patch_vlmeval_reasoning_prompts.py"
+DEEPSEEK_JUDGE_PATCHER="$SCRIPT_DIR/patch_vlmeval_deepseek_judge.py"
 
 mkdir -p "$EVAL_ROOT"
 if [[ ! -d "$SOURCE_DIR" ]]; then
@@ -31,6 +32,9 @@ if ! grep -q 'FVE patch: exported checkpoints' "$SOURCE_DIR/vlmeval/vlm/qwen2_vl
 fi
 "$BASE_PYTHON" "$MCQ_PROMPT_PATCHER" "$SOURCE_DIR/vlmeval/dataset/image_mcq.py"
 "$BASE_PYTHON" "$REASONING_PROMPT_PATCHER" "$SOURCE_DIR/vlmeval/dataset/image_vqa.py"
+"$BASE_PYTHON" "$DEEPSEEK_JUDGE_PATCHER" \
+  "$SOURCE_DIR/vlmeval/dataset/utils/judge_util.py" \
+  "$SOURCE_DIR/vlmeval/api/gpt.py"
 
 if [[ ! -x "$ENV_DIR/bin/python" ]]; then
   "$BASE_PYTHON" -m venv --system-site-packages "$ENV_DIR"

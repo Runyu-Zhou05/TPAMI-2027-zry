@@ -193,9 +193,12 @@ Every raw response remains in the prediction workbook, and the run manifest
 records non-empty and correctly formatted reasoning coverage.
 
 MathVista's official pinned evaluator requires an auxiliary answer-extraction
-judge. The default is `gpt-4o-mini`; set `OPENAI_API_KEY` (and optionally
-`OPENAI_API_BASE`) or configure VLMEvalKit's `LOCAL_LLM`. MMMU is scored with
-`exact_matching`, so its score does not depend on that judge.
+judge. This project uses the official DeepSeek API with `deepseek-chat` as
+required by the experiment protocol; MMMU is scored with `exact_matching` and
+does not depend on that judge. The setup patch adds a distinct
+`deepseek-chat` route because the pinned VLMEvalKit name `deepseek` refers to
+SiliconFlow rather than the official DeepSeek endpoint. It also redacts API keys
+from VLMEvalKit logs.
 
 Download and verify both reasoning datasets:
 
@@ -214,12 +217,14 @@ largest checkpoint directory. Run Base and Rotation with identical settings:
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
   --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
+  --judge-api-key-file <deepseek-api-key.txt>
 
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path <export.exported_model> --model-name Rotation --model-role rotation \
   --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
+  --judge-api-key-file <deepseek-api-key.txt>
 ```
 
 Each immutable attempt is written under

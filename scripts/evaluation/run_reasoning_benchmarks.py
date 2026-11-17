@@ -28,7 +28,7 @@ BENCHMARKS = {
     "MathVista_MINI": {"class": "MathVista", "dataset": "MathVista_MINI"},
     "MMMU_DEV_VAL": {"class": "MMMUDataset", "dataset": "MMMU_DEV_VAL"},
 }
-JUDGES = ("gpt-4-0125", "gpt-4o", "gpt-4o-0806", "gpt-4o-mini")
+JUDGES = ("deepseek-chat", "gpt-4-0125", "gpt-4o", "gpt-4o-0806", "gpt-4o-mini")
 
 
 def data_fingerprint(lmu_root: Path, manifest: dict) -> dict:
@@ -144,7 +144,13 @@ def main() -> None:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--gpu", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
-    parser.add_argument("--mathvista-judge", choices=JUDGES, default="gpt-4o-mini")
+    parser.add_argument("--mathvista-judge", choices=JUDGES, default="deepseek-chat")
+    parser.add_argument(
+        "--judge-api-key-file",
+        type=Path,
+        default=Path(os.environ["DEEPSEEK_API_KEY_FILE"]) if os.environ.get("DEEPSEEK_API_KEY_FILE") else None,
+    )
+    parser.add_argument("--deepseek-api-base", default="https://api.deepseek.com/chat/completions")
     parser.add_argument("--max-new-tokens", type=int, default=4096)
     parser.add_argument("--eval-root", type=Path, default=None)
     parser.add_argument("--resume", action="store_true")
@@ -209,6 +215,9 @@ def main() -> None:
         "data_manifest_sha256": sha256_file(data_manifest_path),
         "evaluator": evaluator_fingerprint(vlmeval_root),
         "judges": {"MathVista_MINI": args.mathvista_judge, "MMMU_DEV_VAL": "exact_matching"},
+        "judge_api": {
+            "MathVista_MINI": args.deepseek_api_base if args.mathvista_judge == "deepseek-chat" else "VLMEvalKit default"
+        },
         "model": model_provenance,
         "model_role": args.model_role,
         "package_freeze": packages,
@@ -247,6 +256,17 @@ def main() -> None:
     if args.dry_run:
         print(json.dumps({"attempt": str(work_dir), "commands": commands, "fingerprint": fingerprint}, indent=2))
         return
+    judge_key = None
+    if args.mathvista_judge == "deepseek-chat":
+        if args.judge_api_key_file is not None:
+            key_file = args.judge_api_key_file.expanduser().resolve()
+            if not key_file.is_file():
+                raise SystemExit(f"DeepSeek API-key file is missing: {key_file}")
+            judge_key = key_file.read_text().strip()
+        else:
+            judge_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        if not judge_key.startswith("sk-"):
+            raise SystemExit("DeepSeek judge requires --judge-api-key-file or DEEPSEEK_API_KEY")
     expected_preflight = {"fingerprint": fingerprint, "provenance": provenance}
     if work_dir.exists() and any(work_dir.iterdir()):
         if not args.resume or not preflight_path.is_file():
@@ -269,6 +289,9 @@ def main() -> None:
     environment["CUDA_VISIBLE_DEVICES"] = args.gpu
     environment["LMUData"] = str(lmu_root)
     environment["TOKENIZERS_PARALLELISM"] = "false"
+    if args.mathvista_judge == "deepseek-chat":
+        environment["OPENAI_API_KEY"] = judge_key
+        environment["OPENAI_API_BASE"] = args.deepseek_api_base
     for name in ("MMMU_DEV_VAL", "MathVista_MINI"):
         with (work_dir / f"{name}.log").open("a" if args.resume else "x", buffering=1) as log:
             subprocess.run(

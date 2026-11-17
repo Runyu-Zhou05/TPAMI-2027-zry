@@ -93,13 +93,15 @@ def download_one(name: str, root: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--lmu-data-root", type=Path, required=True)
+    parser.add_argument("--benchmarks", nargs="+", choices=sorted(DATASETS), default=list(DATASETS))
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
 
     root = args.lmu_data_root.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    records = {}
-    for name in DATASETS:
+    output = root / "reasoning_benchmark_manifest.json"
+    records = json.loads(output.read_text()).get("benchmarks", {}) if output.is_file() else {}
+    for name in dict.fromkeys(args.benchmarks):
         path = root / f"{name}.tsv"
         if args.verify_only:
             if not path.is_file():
@@ -116,7 +118,6 @@ def main() -> None:
         },
         "schema_version": 1,
     }
-    output = root / "reasoning_benchmark_manifest.json"
     temporary = output.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     os.replace(temporary, output)

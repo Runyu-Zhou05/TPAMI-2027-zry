@@ -416,8 +416,9 @@ Use `MathVista_MINI` and `MMMU_DEV_VAL`; do not silently substitute unlabeled
 test splits. Both Base and Rotation must use the explicit `<think>...</think>`
 and `<answer>...</answer>` reasoning prompts, 4,096 response tokens, and the
 same deterministic generation settings. Raw reasoning remains in prediction
-workbooks. MathVista requires an auxiliary extraction judge; the default is
-`gpt-4o-mini`, while MMMU uses exact matching.
+workbooks. MathVista uses the official DeepSeek `deepseek-chat` API as its
+auxiliary extraction judge, while MMMU uses exact matching. Never print, log,
+or commit the DeepSeek key; pass it with `--judge-api-key-file`.
 
 ```bash
 python scripts/evaluation/prepare_reasoning_data.py \
@@ -426,12 +427,14 @@ python scripts/evaluation/prepare_reasoning_data.py \
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
   --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
+  --judge-api-key-file <deepseek-api-key.txt>
 
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path <export.exported_model> --model-name Rotation --model-role rotation \
   --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge gpt-4o-mini
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
+  --judge-api-key-file <deepseek-api-key.txt>
 
 python scripts/evaluation/aggregate_reasoning_results.py \
   --base-manifest <base-reasoning-manifest> \
@@ -440,9 +443,8 @@ python scripts/evaluation/aggregate_reasoning_results.py \
 ```
 
 The authoritative Rotation path is the `export.exported_model` field in the
-fingerprinted post-training manifest. MathVista scoring requires
-`OPENAI_API_KEY` or a configured VLMEvalKit `LOCAL_LLM`. See `EVALUATION.md`
-for provenance and output details.
+fingerprinted post-training manifest. See `EVALUATION.md` for DeepSeek routing,
+credential handling, provenance, and output details.
 
 ### 12. Package the paper-table result bundle
 
