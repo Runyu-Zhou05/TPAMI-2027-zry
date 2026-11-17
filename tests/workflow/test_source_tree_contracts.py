@@ -65,6 +65,22 @@ class SourceTreeContractTest(unittest.TestCase):
         self.assertIn("verl.models.transformers", packages)
         self.assertIn("verl.models.mcore.qwen2_5_vl", packages)
 
+    def test_transformers_455_adapters_are_shipped(self):
+        monkey_patch = (ROOT / "verl/models/transformers/monkey_patch.py").read_text()
+        qwen25 = (ROOT / "verl/models/transformers/qwen2_5_vl.py").read_text()
+        qwen2 = (ROOT / "verl/models/transformers/qwen2_vl.py").read_text()
+        self.assertNotIn('raise ValueError("Transformers 4.53 is not supported")', monkey_patch)
+        self.assertIn("_ulysses_flash_attention_forward_transformers_4_55", monkey_patch)
+        self.assertIn("forward_base_model_new_api", qwen25)
+        self.assertIn("flash_attn_supports_top_left_mask", qwen2)
+        self.assertTrue((ROOT / "verl/utils/transformers_compat.py").is_file())
+        self.assertTrue((ROOT / "scripts/frozen_vision/check_transformers_compat.py").is_file())
+
+    def test_effective_memory_probe_is_available(self):
+        from scripts.frozen_vision.check_environment import effective_memory_gib
+
+        self.assertGreater(effective_memory_gib(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

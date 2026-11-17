@@ -16,6 +16,10 @@ Do not begin a full training run until the environment and all three FVE smoke
 gates below pass. Do not change global batch semantics merely because the H20s
 have more memory.
 
+Request at least 180 GB pod memory (about 167 GiB). FVE enables parameter and
+optimizer CPU offload; the previously attempted 64 GB limit OOMed before a
+training step. The environment gate fails below 160 GiB effective cgroup memory.
+
 ## Environment source of truth
 
 Use a Python 3.10 image and prefer the following validated core stack:
@@ -108,6 +112,10 @@ Run these checks inside the final image, with the selected environment first on
    ```bash
    python scripts/frozen_vision/check_environment.py
    ```
+
+   This also executes the Qwen2.5-VL `apply_monkey_patch` path against the
+   installed Transformers version and checks effective pod/cgroup memory. An
+   import-only check is insufficient.
 
 2. Run a real CUDA operation on every visible GPU, not just an import:
 

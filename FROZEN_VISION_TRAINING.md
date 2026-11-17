@@ -47,6 +47,9 @@ not durable experiment outputs.
 Build and validate the environment exactly as specified in `AGENTS.md`, then
 download the pinned model and build the pinned Rotation dataset:
 
+The job must request at least 180 GB CPU memory because parameter and optimizer
+offload exceed the previously attempted 64 GB pod limit.
+
 ```bash
 cd TPAMI-2027-zry
 

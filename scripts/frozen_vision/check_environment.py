@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import os
 import sys
+from pathlib import Path
 
 
 REQUIRED = {
@@ -30,6 +32,25 @@ REQUIRED = {
     "vllm": "0.10.2",
     "xformers": "0.0.32.post1",
 }
+MIN_EFFECTIVE_MEMORY_GIB = 160
+
+
+def effective_memory_gib() -> float:
+    physical = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    limits = [physical]
+    for candidate in (
+        Path("/sys/fs/cgroup/memory.max"),
+        Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+    ):
+        if not candidate.is_file():
+            continue
+        value = candidate.read_text().strip()
+        if value.isdigit():
+            limit = int(value)
+            # Some cgroup-v1 hosts use a near-int64 sentinel for unlimited.
+            if 0 < limit < 2**60:
+                limits.append(limit)
+    return min(limits) / 2**30
 
 
 def validate_environment() -> dict:
@@ -48,6 +69,13 @@ def validate_environment() -> dict:
     if mismatches:
         raise SystemExit("Validated FVE dependency mismatch:\n" + "\n".join(mismatches))
 
+    memory_gib = effective_memory_gib()
+    if memory_gib < MIN_EFFECTIVE_MEMORY_GIB:
+        raise SystemExit(
+            f"FVE offload requires at least {MIN_EFFECTIVE_MEMORY_GIB} GiB effective pod memory; "
+            f"found {memory_gib:.1f} GiB"
+        )
+
     import torch
 
     if torch.version.cuda != "12.8":
@@ -62,17 +90,22 @@ def validate_environment() -> dict:
     from verl.models.transformers.monkey_patch import apply_monkey_patch  # noqa: F401
     from verl.models.transformers.qwen2_vl import get_rope_index  # noqa: F401
     from verl.workers.fsdp_workers import ActorRolloutRefWorker  # noqa: F401
+    from check_transformers_compat import validate_transformers_patch
+
+    transformers_patch = validate_transformers_patch()
 
     return {
         "cuda": torch.version.cuda,
         "cuda_architectures": architectures,
         "packages": installed,
         "python": sys.version.split()[0],
+        "effective_memory_gib": memory_gib,
         "production_imports": [
             "verl.models.transformers.monkey_patch",
             "verl.models.transformers.qwen2_vl",
             "verl.workers.fsdp_workers.ActorRolloutRefWorker",
         ],
+        "transformers_patch": transformers_patch,
         "validated": True,
     }
 

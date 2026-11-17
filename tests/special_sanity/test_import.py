@@ -34,3 +34,10 @@ def test_fve_production_worker_import():
     assert callable(apply_monkey_patch)
     assert callable(get_rope_index)
     assert ActorRolloutRefWorker is not None
+
+
+def test_fve_transformers_455_monkey_patch():
+    from scripts.frozen_vision.check_transformers_compat import validate_transformers_patch
+
+    result = validate_transformers_patch()
+    assert result["apply_monkey_patch"] == "ok"
