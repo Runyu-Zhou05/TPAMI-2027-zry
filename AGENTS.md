@@ -124,8 +124,16 @@ Run these checks inside the final image, with the selected environment first on
 4. Run the lightweight repository tests:
 
    ```bash
-   python -m pytest -q tests/utils/test_reward_trace.py tests/special_sanity/test_import.py tests/utils/test_config_on_cpu.py
+   python -m pytest -q \
+     tests/workflow/test_source_tree_contracts.py \
+     tests/utils/test_reward_trace.py \
+     tests/special_sanity/test_import.py \
+     tests/utils/test_config_on_cpu.py
    ```
+
+   `test_import.py` must import `verl.workers.fsdp_workers`; a top-level
+   `import verl` does not prove that the required `verl/models/` source package
+   was included in the clone.
 
 5. Confirm the Ray CLI belongs to the same environment. Use the executable,
    not `python -m ray` (Ray has no `ray.__main__`):
@@ -462,6 +470,9 @@ python scripts/evaluation/package_final_results.py \
 
 - Keep generated models, datasets, caches, logs, traces, and checkpoints out of
   Git.
+- Keep the generated root directory ignore anchored as `/models/`. Never change
+  it back to an unanchored `models/`, which would silently hide the required
+  `verl/models/` Python package.
 - Do not restore old `/data2/ryzhou/...` paths or machine-specific proxies.
 - Preserve dry-run purity: `--dry-run` must not create directories or files.
 - Use `python3` or the selected environment's explicit Python, never assume a

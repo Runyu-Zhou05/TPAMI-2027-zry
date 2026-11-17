@@ -127,14 +127,16 @@ outputs
 
 # Frozen Vision Encoder (FVE) generated artifacts. These must live outside
 # source control even when a local output root is used for smoke testing.
-models/
-tensorboard_result/
-reward_traces/
-training_logs/
-smoke_data/
-.ray/
-data_build_logs/
-inputs/
-frozen_vision_queue.complete
-frozen_vision_queue.failed
-frozen_vision_watcher.lock
+# Anchor this at the repository root: an unanchored `models/` also hides the
+# required upstream Python package at `verl/models/`.
+/models/
+/tensorboard_result/
+/reward_traces/
+/training_logs/
+/smoke_data/
+/.ray/
+/data_build_logs/
+/inputs/
+/frozen_vision_queue.complete
+/frozen_vision_queue.failed
+/frozen_vision_watcher.lock

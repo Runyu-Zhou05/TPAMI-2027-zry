@@ -55,11 +55,24 @@ def validate_environment() -> dict:
     architectures = torch.cuda.get_arch_list()
     if "sm_90" not in architectures:
         raise SystemExit(f"Torch lacks H20 sm_90 kernels: {architectures}")
+
+    # Import the actual production worker and the source package that was once
+    # accidentally hidden by an unanchored `models/` gitignore rule. Basic
+    # `import verl` is insufficient because it does not traverse this path.
+    from verl.models.transformers.monkey_patch import apply_monkey_patch  # noqa: F401
+    from verl.models.transformers.qwen2_vl import get_rope_index  # noqa: F401
+    from verl.workers.fsdp_workers import ActorRolloutRefWorker  # noqa: F401
+
     return {
         "cuda": torch.version.cuda,
         "cuda_architectures": architectures,
         "packages": installed,
         "python": sys.version.split()[0],
+        "production_imports": [
+            "verl.models.transformers.monkey_patch",
+            "verl.models.transformers.qwen2_vl",
+            "verl.workers.fsdp_workers.ActorRolloutRefWorker",
+        ],
         "validated": True,
     }
 

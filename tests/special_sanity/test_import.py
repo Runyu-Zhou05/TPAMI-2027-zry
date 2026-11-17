@@ -23,3 +23,14 @@ def test_single_controller_import():
     import verl.single_controller
 
     print(verl.single_controller.__version__)
+
+
+def test_fve_production_worker_import():
+    """Catch missing source subpackages that shallow `import verl` cannot see."""
+    from verl.models.transformers.monkey_patch import apply_monkey_patch
+    from verl.models.transformers.qwen2_vl import get_rope_index
+    from verl.workers.fsdp_workers import ActorRolloutRefWorker
+
+    assert callable(apply_monkey_patch)
+    assert callable(get_rope_index)
+    assert ActorRolloutRefWorker is not None
