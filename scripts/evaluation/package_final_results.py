@@ -56,6 +56,32 @@ def validate_file_record(record: dict, label: str) -> Path:
     return path
 
 
+def validate_difficulty_analysis(record: dict, run_id: str, task: str) -> Path:
+    manifest_path = validate_file_record(record, "stage reward difficulty analysis")
+    payload = json.loads(manifest_path.read_text())
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("run_id") != run_id
+        or payload.get("task") != task
+        or not payload.get("analysis_fingerprint")
+    ):
+        raise SystemExit(f"Reward difficulty analysis identity mismatch: {manifest_path}")
+    output_hashes = payload.get("output_sha256", {})
+    expected_outputs = {
+        "reward_difficulty_by_stage.csv",
+        "reward_difficulty_by_step.csv",
+        "reward_difficulty_groups.parquet",
+        "reward_difficulty_summary.json",
+    }
+    if set(output_hashes) != expected_outputs:
+        raise SystemExit(f"Reward difficulty analysis output inventory mismatch: {manifest_path}")
+    for name, expected_hash in output_hashes.items():
+        output = manifest_path.parent / name
+        if not output.is_file() or sha256_file(output) != expected_hash:
+            raise SystemExit(f"Reward difficulty analysis output changed: {output}")
+    return manifest_path
+
+
 def validate_score_artifacts(path: Path, manifest: dict, required: set[str]) -> None:
     artifacts = manifest.get("score_artifacts", {})
     hashes = manifest.get("score_artifact_sha256", {})
@@ -115,6 +141,9 @@ def copy_curated_training(training_dir: Path, target: Path) -> None:
         "*manifest.json",
         "checkpoint_complete.json",
         "checkpoint_stage.*.json",
+        "reward_difficulty_*.csv",
+        "reward_difficulty_groups.parquet",
+        "reward_difficulty_summary.json",
         "latest_checkpointed_iteration.txt",
     )
     copied = set()
@@ -221,11 +250,29 @@ def validate_lineage(args) -> dict:
     stages = queue.get("stages", [])
     if [stage.get("mode") for stage in stages] != ["quick", "quick-resume", "production-smoke", "train"]:
         raise SystemExit(f"Queue stage sequence is incomplete: {queue_path}")
+    train_difficulty_path = None
     for stage in stages:
         if stage.get("task") != "rotation":
             raise SystemExit(f"Queue contains a non-Rotation stage: {queue_path}")
         validate_file_record(stage.get("checkpoint", {}).get("completion_manifest", {}), "stage checkpoint manifest")
         validate_file_record(stage.get("checkpoint", {}).get("tracker", {}), "stage checkpoint tracker")
+        if stage.get("difficulty_analysis") is not None:
+            difficulty_path = validate_difficulty_analysis(
+                stage["difficulty_analysis"], run_id, stage.get("trace_task", stage.get("task"))
+            )
+            if stage.get("mode") == "train":
+                train_difficulty_path = difficulty_path
+        elif stage.get("mode") == "train":
+            if args.reward_difficulty_manifest is None:
+                raise SystemExit(
+                    "Legacy queue lacks train reward analysis; run analyze_reward_difficulty.py and pass "
+                    "--reward-difficulty-manifest"
+                )
+            supplied = args.reward_difficulty_manifest.expanduser().resolve()
+            if not supplied.is_file():
+                raise SystemExit(f"Reward difficulty manifest is missing: {supplied}")
+            record = {"bytes": supplied.stat().st_size, "path": str(supplied), "sha256": sha256_file(supplied)}
+            train_difficulty_path = validate_difficulty_analysis(record, run_id, "rotation")
         validate_file_record(stage.get("reward_summary", {}), "stage reward summary")
         stage_run_dir = Path(stage.get("run_dir", "")).expanduser().resolve()
         if training_dir not in stage_run_dir.parents:
@@ -332,6 +379,10 @@ def validate_lineage(args) -> dict:
         "rotation_evaluation_manifest": {"path": str(rotation_path), "sha256": sha256_file(rotation_path)},
         "table_manifest": {"path": str(tables_dir / "paper_tables.json"), "sha256": sha256_file(tables_dir / "paper_tables.json")},
         "table_protocol": table_manifest.get("detail_protocol"),
+        "reward_difficulty_manifest": {
+            "path": str(train_difficulty_path),
+            "sha256": sha256_file(train_difficulty_path),
+        },
     }
     detail_records = {
         name: table_manifest.get("inputs", {}).get(name) for name in ("base_detail", "rotation_detail")
@@ -386,6 +437,7 @@ def main() -> None:
     parser.add_argument("--queue-manifest", type=Path, required=True)
     parser.add_argument("--post-training-manifest", type=Path, required=True)
     parser.add_argument("--rotation-data-manifest", type=Path, required=True)
+    parser.add_argument("--reward-difficulty-manifest", type=Path, default=None)
     parser.add_argument("--base-eval-manifest", type=Path, required=True)
     parser.add_argument("--rotation-eval-manifest", type=Path, required=True)
     parser.add_argument("--tables-dir", type=Path, required=True)
@@ -448,6 +500,10 @@ def main() -> None:
             ("rotation_data_manifest.json", args.rotation_data_manifest),
         ):
             shutil.copy2(Path(source).expanduser().resolve(), workflow / label)
+        shutil.copy2(
+            Path(lineage["reward_difficulty_manifest"]["path"]),
+            workflow / "reward_difficulty_manifest.json",
+        )
         if "detail_split_manifest" in lineage:
             shutil.copy2(Path(lineage["detail_split_manifest"]["path"]), workflow / "detail_split_manifest.json")
         (bundle / "artifact_manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")

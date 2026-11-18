@@ -341,6 +341,16 @@ Do not start full six-benchmark evaluation unless this post-training manifest
 exists and the exported model passes the same six-subtask smoke as the base
 model.
 
+Before evaluation, require the train-stage reward difficulty analysis manifest
+under the run directory. New queues generate it automatically. For a run
+started from an older checkout, run `analyze_reward_difficulty.py` manually as
+documented in `REWARD_DIFFICULTY.md`. The primary reviewer-facing metric is the
+fraction of prompt groups with non-zero within-group reward variance; do not
+substitute global reward standard deviation.
+Legacy queues do not contain this manifest in `queue.complete`; after manual
+analysis, pass its path to `package_final_results.py` with
+`--reward-difficulty-manifest`.
+
 ### 10. Run six benchmarks and aggregate the paper tables
 
 Download and checksum all six paper datasets. The paper protocol is

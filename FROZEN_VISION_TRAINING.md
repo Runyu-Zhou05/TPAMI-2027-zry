@@ -154,6 +154,13 @@ rollout index, dataset index, source, ground truth, generated response,
 `raw_reward`, reward-computation UTC nanoseconds, and trace-write UTC
 nanoseconds. Existing step files are never overwritten silently.
 
+The guarded queue automatically converts these lossless traces into the
+reviewer-facing metrics defined in `REWARD_DIFFICULTY.md`, including the
+fraction of prompt groups with non-zero within-group reward variance, reward
+entropy, success rate, and all-fail/all-success/mixed group fractions. Derived
+group, step, and early/middle/late artifacts are written below each run's
+`reward_analysis/` directory and included in final packaging.
+
 Hydra configuration snapshots and its job log are written under each
 experiment's `hydra/` directory inside `FVE_OUTPUT_ROOT`; the training command
 must not create a repository-local `outputs/` tree.

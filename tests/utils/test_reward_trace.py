@@ -51,6 +51,9 @@ def test_reward_trace_records_every_rollout(tmp_path):
     assert table["rollout_id"].to_pylist() == [0, 1, 0, 1]
     assert metrics["difficulty/raw_reward_mean"] == 0.5
     assert metrics["difficulty/all_rollouts_fail_rate"] == 0.0
+    assert metrics["difficulty/informative_group_fraction"] == 1.0
+    assert metrics["difficulty/mixed_success_group_fraction"] == 1.0
+    assert metrics["difficulty/mean_group_reward_entropy_bits"] == 1.0
 
     with pytest.raises(FileExistsError, match="Refusing to overwrite"):
         recorder.write_step(
@@ -66,13 +69,13 @@ def test_reward_trace_records_every_rollout(tmp_path):
 def test_reward_trace_reconciles_uncommitted_steps(tmp_path):
     batch = SimpleNamespace(
         non_tensor_batch={
-            "uid": np.array(["a"], dtype=object),
-            "data_source": np.array(["rotation"], dtype=object),
-            "extra_info": np.array([{"index": 1}], dtype=object),
-            "reward_model": np.array([{"ground_truth": "90"}], dtype=object),
+            "uid": np.array(["a", "a"], dtype=object),
+            "data_source": np.array(["rotation", "rotation"], dtype=object),
+            "extra_info": np.array([{"index": 1}, {"index": 1}], dtype=object),
+            "reward_model": np.array([{"ground_truth": "90"}, {"ground_truth": "90"}], dtype=object),
         }
     )
-    reward = torch.tensor([[1.0]])
+    reward = torch.tensor([[1.0], [0.0]])
     recorder = RewardTraceRecorder(tmp_path, "rotation", "run-resume")
     for step in (1, 2, 3):
         recorder.write_step(
@@ -80,7 +83,7 @@ def test_reward_trace_reconciles_uncommitted_steps(tmp_path):
             reward,
             global_step=step,
             epoch=0,
-            responses=["<answer>90</answer>"],
+            responses=["<answer>90</answer>", "<answer>0</answer>"],
             reward_computed_at_utc_ns=time.time_ns(),
         )
 

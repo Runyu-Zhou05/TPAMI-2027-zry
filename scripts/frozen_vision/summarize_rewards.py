@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+from collections import defaultdict
 from pathlib import Path
 
 REQUIRED_COLUMNS = {
@@ -52,6 +53,7 @@ def main():
     try:
         import numpy as np
         import pyarrow.parquet as pq
+        from verl.utils.reward_difficulty import aggregate_group_statistics, group_reward_statistics
     except ImportError as exc:
         raise SystemExit("NumPy and PyArrow are required to summarize reward traces") from exc
     files = sorted(args.task_dir.glob("step_*.parquet"))
@@ -59,6 +61,7 @@ def main():
         raise SystemExit(f"No reward traces found in {args.task_dir}")
 
     rewards = []
+    grouped_rewards = defaultdict(list)
     steps = []
     for file in files:
         match = re.fullmatch(r"step_(\d{8})\.parquet", file.name)
@@ -83,6 +86,8 @@ def main():
                 "global_step",
                 "reward_computed_at_utc_ns",
                 "trace_written_at_utc_ns",
+                "uid",
+                "rollout_id",
                 "raw_reward",
             ],
         )
@@ -100,6 +105,13 @@ def main():
         if np.any(written < computed):
             raise SystemExit(f"Reward trace {file} has write timestamps before reward computation")
         rewards.append(table["raw_reward"].to_numpy())
+        for uid, rollout_id, reward in zip(
+            table["uid"].to_pylist(),
+            table["rollout_id"].to_pylist(),
+            table["raw_reward"].to_pylist(),
+            strict=True,
+        ):
+            grouped_rewards[(filename_step, str(uid))].append((int(rollout_id), float(reward)))
         steps.append(filename_step)
 
     expected_steps = list(range(1, max(steps) + 1))
@@ -112,13 +124,27 @@ def main():
         )
 
     values = np.concatenate(rewards)
+    group_metrics = []
+    for identity, rollout_rewards in grouped_rewards.items():
+        ordered = sorted(rollout_rewards)
+        if [rollout_id for rollout_id, _ in ordered] != list(range(len(ordered))):
+            raise SystemExit(f"Invalid rollout IDs for prompt group {identity}")
+        group_metrics.append(group_reward_statistics([reward for _, reward in ordered]))
+    difficulty = aggregate_group_statistics(group_metrics)
     summary = {
+        "all_fail_group_fraction": difficulty["all_fail_group_fraction"],
+        "all_success_group_fraction": difficulty["all_success_group_fraction"],
         "checkpoint_step": checkpoint_step,
         "expected_rows_per_step": args.expected_rows_per_step,
         "first_step": steps[0],
         "last_step": steps[-1],
         "max": float(values.max()),
+        "informative_group_fraction": difficulty["informative_group_fraction"],
+        "mean_group_reward_entropy_bits": difficulty["mean_group_reward_entropy_bits"],
+        "mean_group_reward_variance": difficulty["mean_group_reward_variance"],
         "min": float(values.min()),
+        "mixed_success_group_fraction": difficulty["mixed_success_group_fraction"],
+        "prompt_groups": difficulty["prompt_groups"],
         "raw_reward_mean": float(values.mean()),
         "raw_reward_std": float(values.std()),
         "reward_count": int(values.size),

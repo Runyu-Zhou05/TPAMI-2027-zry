@@ -11,6 +11,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from verl.utils.reward_difficulty import aggregate_group_statistics, group_reward_statistics
+
 
 def _as_string(value):
     if value is None:
@@ -89,12 +91,17 @@ class RewardTraceRecorder:
         ground_truths = []
         for uid, extra_info, reward_model in zip(uids, extra_infos, reward_models, strict=True):
             uid_string = _as_string(uid)
+            if uid_string in (None, "", "None"):
+                raise ValueError("Reward tracing requires a non-empty prompt UID for every rollout")
             rollout_ids.append(rollout_counts[uid_string])
             rollout_counts[uid_string] += 1
             dataset_indices.append(_as_string(extra_info.get("index") if isinstance(extra_info, dict) else None))
             ground_truths.append(
                 _as_string(reward_model.get("ground_truth") if isinstance(reward_model, dict) else None)
             )
+        group_sizes = set(rollout_counts.values())
+        if len(group_sizes) != 1:
+            raise ValueError(f"Reward tracing found inconsistent rollout group sizes: {sorted(group_sizes)}")
 
         table = pa.table(
             {
@@ -132,12 +139,18 @@ class RewardTraceRecorder:
         grouped = defaultdict(list)
         for uid, reward in zip(uids, raw_rewards, strict=True):
             grouped[_as_string(uid)].append(float(reward))
-        all_fail_rate = float(np.mean([max(values) <= 0.0 for values in grouped.values()]))
+        group_metrics = [group_reward_statistics(values) for values in grouped.values()]
+        difficulty = aggregate_group_statistics(group_metrics)
         return {
             "difficulty/raw_reward_mean": float(np.mean(raw_rewards)),
             "difficulty/raw_reward_std": float(np.std(raw_rewards)),
             "difficulty/zero_rate": float(np.mean(raw_rewards <= 0.0)),
-            "difficulty/all_rollouts_fail_rate": all_fail_rate,
-            "difficulty/pass_at_n": 1.0 - all_fail_rate,
+            "difficulty/all_rollouts_fail_rate": difficulty["all_fail_group_fraction"],
+            "difficulty/all_rollouts_success_rate": difficulty["all_success_group_fraction"],
+            "difficulty/informative_group_fraction": difficulty["informative_group_fraction"],
+            "difficulty/mean_group_reward_entropy_bits": difficulty["mean_group_reward_entropy_bits"],
+            "difficulty/mean_group_reward_variance": difficulty["mean_group_reward_variance"],
+            "difficulty/mixed_success_group_fraction": difficulty["mixed_success_group_fraction"],
+            "difficulty/pass_at_n": 1.0 - difficulty["all_fail_group_fraction"],
             "difficulty/reward_trace_count": int(count),
         }

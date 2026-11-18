@@ -26,6 +26,8 @@ from fve_runtime import (
 
 RUNNER = ROOT / "scripts/frozen_vision/run_frozen_vision.py"
 SUMMARY = ROOT / "scripts/frozen_vision/summarize_rewards.py"
+DIFFICULTY_ANALYZER = ROOT / "scripts/frozen_vision/analyze_reward_difficulty.py"
+REWARD_DIFFICULTY = ROOT / "verl/utils/reward_difficulty.py"
 ENVIRONMENT_CHECK = ROOT / "scripts/frozen_vision/check_environment.py"
 
 
@@ -67,6 +69,32 @@ def validate_file_record(record, label):
     return path
 
 
+def validate_difficulty_analysis(record, run_id, task):
+    manifest_path = validate_file_record(record, "reward difficulty analysis")
+    payload = json.loads(manifest_path.read_text())
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("run_id") != run_id
+        or payload.get("task") != task
+        or not payload.get("analysis_fingerprint")
+    ):
+        raise SystemExit(f"Reward difficulty analysis identity mismatch: {manifest_path}")
+    output_hashes = payload.get("output_sha256", {})
+    expected_outputs = {
+        "reward_difficulty_by_stage.csv",
+        "reward_difficulty_by_step.csv",
+        "reward_difficulty_groups.parquet",
+        "reward_difficulty_summary.json",
+    }
+    if set(output_hashes) != expected_outputs:
+        raise SystemExit(f"Reward difficulty analysis output inventory mismatch: {manifest_path}")
+    for name, expected_hash in output_hashes.items():
+        output = manifest_path.parent / name
+        if not output.is_file() or sha256_file(output) != expected_hash:
+            raise SystemExit(f"Reward difficulty analysis output changed: {output}")
+    return manifest_path
+
+
 def validate_completed_marker(completed, run_id, expected_fingerprint=None):
     if (
         completed.get("schema_version") != 1
@@ -83,6 +111,9 @@ def validate_completed_marker(completed, run_id, expected_fingerprint=None):
             raise SystemExit("Queue completion marker contains a non-Rotation stage")
         validate_file_record(stage.get("checkpoint", {}).get("completion_manifest"), "checkpoint manifest")
         validate_file_record(stage.get("checkpoint", {}).get("tracker"), "checkpoint tracker")
+        validate_difficulty_analysis(
+            stage.get("difficulty_analysis"), run_id, stage.get("trace_task", stage.get("task"))
+        )
         validate_file_record(stage.get("reward_summary"), "reward summary")
     return completed
 
@@ -106,7 +137,14 @@ def invocation_provenance(args, output_root, run_id, data_root, smoke_data_root,
         "run_id": run_id,
         "scripts": {
             path.name: required_file(path, f"workflow script {path.name}")
-            for path in (ENVIRONMENT_CHECK, RUNNER, SUMMARY, Path(__file__).resolve())
+            for path in (
+                DIFFICULTY_ANALYZER,
+                ENVIRONMENT_CHECK,
+                REWARD_DIFFICULTY,
+                RUNNER,
+                SUMMARY,
+                Path(__file__).resolve(),
+            )
         },
         "smoke_files": {
             name: required_file(smoke_data_root / name, f"smoke dataset {name}")
@@ -264,13 +302,38 @@ def main():
             except (json.JSONDecodeError, OSError) as exc:
                 raise SystemExit(f"Malformed reward summary: {summary_path}") from exc
             atomic_json(stage_summary_path, summary_payload)
+            expected_rollouts = 2 if mode in {"quick", "quick-resume"} else 5
+            analysis_dir = run_dir / "reward_analysis" / trace_task / mode
+            run(
+                [
+                    args.python_executable,
+                    str(DIFFICULTY_ANALYZER),
+                    str(run_dir / "reward_traces" / trace_task),
+                    "--output-dir",
+                    str(analysis_dir),
+                    "--expected-run-id",
+                    run_id,
+                    "--expected-task",
+                    trace_task,
+                    "--expected-rollouts-per-prompt",
+                    str(expected_rollouts),
+                    "--checkpoint-root",
+                    str(run_dir / "checkpoints"),
+                ],
+                environment,
+                log_path,
+            )
             stage_records.append(
                 {
                     "checkpoint": checkpoint_record(run_dir / "checkpoints", mode),
+                    "difficulty_analysis": required_file(
+                        analysis_dir / "difficulty_analysis_manifest.json", "reward difficulty analysis"
+                    ),
                     "mode": mode,
                     "reward_summary": required_file(stage_summary_path, "stage reward summary"),
                     "run_dir": str(run_dir),
                     "task": task,
+                    "trace_task": trace_task,
                 }
             )
     except BaseException as exc:

@@ -367,6 +367,29 @@ class PackageLineageTest(unittest.TestCase):
             summary.write_text(json.dumps({"trace_validated": True}))
             stage_tracker = train_run / "checkpoints" / "checkpoint_stage.train.json"
             stage_tracker.write_text(json.dumps({"global_step": 20, "mode": "train"}))
+            difficulty = train_run / "reward_analysis" / "rotation.train" / "difficulty_analysis_manifest.json"
+            difficulty.parent.mkdir(parents=True)
+            difficulty_outputs = {}
+            for name in (
+                "reward_difficulty_by_stage.csv",
+                "reward_difficulty_by_step.csv",
+                "reward_difficulty_groups.parquet",
+                "reward_difficulty_summary.json",
+            ):
+                output = difficulty.parent / name
+                output.write_text(f"synthetic {name}\n")
+                difficulty_outputs[name] = sha256(output)
+            difficulty.write_text(
+                json.dumps(
+                    {
+                        "analysis_fingerprint": "d" * 64,
+                        "output_sha256": difficulty_outputs,
+                        "run_id": "run-1",
+                        "schema_version": 1,
+                        "task": "rotation",
+                    }
+                )
+            )
 
             data_manifest = root / "rotation-data.json"
             data_manifest.write_text(
@@ -394,6 +417,7 @@ class PackageLineageTest(unittest.TestCase):
                                     "completion_manifest": self.record(checkpoint),
                                     "tracker": self.record(stage_tracker),
                                 },
+                                "difficulty_analysis": self.record(difficulty),
                                 "mode": mode,
                                 "reward_summary": self.record(summary),
                                 "run_dir": str(train_run.resolve()),
@@ -408,6 +432,7 @@ class PackageLineageTest(unittest.TestCase):
                                     "global_step": 20,
                                     "tracker": self.record(stage_tracker),
                                 },
+                                "difficulty_analysis": self.record(difficulty),
                                 "mode": "train",
                                 "reward_summary": self.record(summary),
                                 "run_dir": str(train_run.resolve()),
