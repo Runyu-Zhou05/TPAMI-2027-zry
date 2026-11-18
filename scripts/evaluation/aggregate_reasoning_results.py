@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare compatible Base and Rotation MathVista/MMMU reasoning runs."""
+"""Publish Rotation-only MathVista/MMMU reasoning results."""
 
 from __future__ import annotations
 
@@ -75,63 +75,31 @@ def load_run(path: Path, role: str) -> tuple[Path, dict]:
     return path, manifest
 
 
-def protocol_signature(manifest: dict) -> dict:
-    provenance = manifest["provenance"]
-    configs = {}
-    for name, original in provenance["configs"].items():
-        config = json.loads(json.dumps(original))
-        model = next(iter(config.pop("model").values()))
-        model.pop("model_path", None)
-        configs[name] = {**config, "model": model}
-    return {
-        "configs": configs,
-        "data": provenance["data"],
-        "data_manifest_sha256": provenance["data_manifest_sha256"],
-        "evaluator": provenance["evaluator"],
-        "judges": provenance["judges"],
-        "package_freeze": provenance["package_freeze"],
-        "reasoning_format": provenance["reasoning_format"],
-    }
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base-manifest", type=Path, required=True)
     parser.add_argument("--rotation-manifest", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
-    base_path, base = load_run(args.base_manifest, "base")
     rotation_path, rotation = load_run(args.rotation_manifest, "rotation")
-    if base.get("run_id") != rotation.get("run_id"):
-        raise SystemExit("Base and Rotation reasoning runs have different run IDs")
-    if protocol_signature(base) != protocol_signature(rotation):
-        raise SystemExit("Base and Rotation reasoning runs use different protocols")
 
     rows = []
     summary = {}
     for name in BENCHMARKS:
-        base_score = float(base["scores_percent"][name])
         rotation_score = float(rotation["scores_percent"][name])
         row = {
             "Benchmark": name,
-            "Base": f"{base_score:.2f}",
             "Rotation": f"{rotation_score:.2f}",
-            "Rotation-Base": f"{rotation_score - base_score:.2f}",
         }
         rows.append(row)
         summary[name] = {
-            "base": base_score,
-            "base_reasoning_coverage": base["reasoning_coverage"][name],
             "rotation": rotation_score,
-            "rotation_minus_base": rotation_score - base_score,
             "rotation_reasoning_coverage": rotation["reasoning_coverage"][name],
         }
     bundle = {
-        "base_manifest": {"path": str(base_path), "sha256": sha256_file(base_path)},
         "benchmarks": summary,
         "rotation_manifest": {"path": str(rotation_path), "sha256": sha256_file(rotation_path)},
-        "run_id": base["run_id"],
+        "run_id": rotation["run_id"],
         "schema_version": 1,
     }
     output_dir = args.output_dir.expanduser().resolve()
@@ -140,7 +108,7 @@ def main() -> None:
         staging = Path(temporary)
         csv_path = staging / "reasoning_results.csv"
         with csv_path.open("w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["Benchmark", "Base", "Rotation", "Rotation-Base"])
+            writer = csv.DictWriter(handle, fieldnames=["Benchmark", "Rotation"])
             writer.writeheader()
             writer.writerows(rows)
         (staging / "reasoning_results.json").write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")

@@ -138,18 +138,15 @@ class ReasoningWorkflowTest(unittest.TestCase):
             self.assertIn("<think> and </think>", first)
             self.assertIn("<answer>final answer</answer>", first)
 
-    def test_compatible_runs_aggregate(self):
+    def test_rotation_run_summarizes_without_base_inference(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            base = build_run(root, "base")
             rotation = build_run(root, "rotation")
             output = root / "results"
             result = subprocess.run(
                 [
                     sys.executable,
                     str(EVAL / "aggregate_reasoning_results.py"),
-                    "--base-manifest",
-                    str(base),
                     "--rotation-manifest",
                     str(rotation),
                     "--output-dir",
@@ -160,21 +157,19 @@ class ReasoningWorkflowTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             payload = json.loads((output / "reasoning_results.json").read_text())
-            self.assertEqual(payload["benchmarks"]["MMMU_DEV_VAL"]["rotation_minus_base"], 0.0)
+            self.assertEqual(payload["benchmarks"]["MMMU_DEV_VAL"]["rotation"], 60.0)
+            self.assertNotIn("base_manifest", payload)
 
-    def test_different_mathvista_judges_are_rejected(self):
+    def test_base_manifest_is_rejected_as_rotation_result(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            base = build_run(root, "base", judge="gpt-4o-mini")
-            rotation = build_run(root, "rotation", judge="gpt-4o")
+            base = build_run(root, "base", judge="deepseek-chat")
             result = subprocess.run(
                 [
                     sys.executable,
                     str(EVAL / "aggregate_reasoning_results.py"),
-                    "--base-manifest",
-                    str(base),
                     "--rotation-manifest",
-                    str(rotation),
+                    str(base),
                     "--output-dir",
                     str(root / "results"),
                 ],
@@ -182,7 +177,7 @@ class ReasoningWorkflowTest(unittest.TestCase):
                 text=True,
             )
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("different protocols", result.stderr)
+            self.assertIn("Invalid rotation reasoning manifest identity", result.stderr)
 
     def test_protocol_constants_are_pinned(self):
         source = (EVAL / "prepare_reasoning_data.py").read_text()
@@ -192,7 +187,12 @@ class ReasoningWorkflowTest(unittest.TestCase):
         self.assertIn('parser.add_argument("--max-new-tokens", type=int, default=4096)', runner)
         self.assertIn('"MMMU_DEV_VAL": "exact_matching"', runner)
         self.assertIn('default="deepseek-chat"', runner)
+        self.assertIn('choices=("rotation",)', runner)
         self.assertIn("https://api.deepseek.com/chat/completions", runner)
+        for script in ("run_six_benchmarks.py", "run_detail_benchmarks.py"):
+            source = (EVAL / script).read_text()
+            self.assertIn('choices=("rotation",)', source)
+            self.assertNotIn('choices=("base", "rotation")', source)
 
 
 if __name__ == "__main__":

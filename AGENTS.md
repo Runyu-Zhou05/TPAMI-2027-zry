@@ -267,33 +267,10 @@ export FVE_EVAL_ROOT="$FVE_OUTPUT_ROOT/tools/vlmevalkit"
 bash scripts/evaluation/setup_vlmevalkit.sh "$FVE_EVAL_ROOT"
 ```
 
-Choose exactly one GPU with sufficient free memory and run the base-model
-MMBench v1.1 smoke. The wrapper downloads and MD5-validates the labeled
-MMBench TSV when `--source-tsv` is omitted. It selects one complete circular
-group for each of the six Table II subtasks and uses VLMEvalKit's official
-Qwen2.5-VL adapter plus exact-matching evaluator.
-
-```bash
-CUDA_VISIBLE_DEVICES=<one-gpu-index> "$FVE_EVAL_ROOT/env/bin/python" \
-  scripts/evaluation/vlmeval_mmbench_smoke.py \
-  --model-path "$FVE_MODEL_PATH" \
-  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" \
-  --output-dir "$FVE_OUTPUT_ROOT/evaluation/smoke/mmbench_base_qwen25vl3b"
-```
-
-Require all of the following before starting the long RL queue:
-
-- 24 predictions covering Logical, Relation, Attribute, Coarse, Cross-Inst.,
-  and Single-Inst.;
-- VLMEvalKit prediction, exact-matching result, and accuracy files;
-- `mmbench_v11_smoke_table2.json` with all six subtasks plus Average;
-- `smoke_manifest.json` recording model, GPU, dataset hash, sample indices,
-  Torch/Transformers versions, and VLMEvalKit commit.
-
-Smoke accuracy is not a reportable experiment result. Its purpose is to prove
-that the exact evaluation implementation can load the model, process images,
-write predictions, score complete circular groups, and project the official
-subtasks into the paper's Table II columns.
+Do not run Base-model inference here. The original Qwen2.5-VL-3B checkpoint is
+only the initialization source, and its earlier smoke evidence is already
+documented in `EVALUATION.md`. The target job evaluates only the exported
+Rotation checkpoint after training.
 
 ### 8. Run the guarded Rotation queue
 
@@ -338,8 +315,7 @@ $FVE_OUTPUT_ROOT/evaluation/post_training/<training-run-id>/<attempt-fingerprint
 ```
 
 Do not start full six-benchmark evaluation unless this post-training manifest
-exists and the exported model passes the same six-subtask smoke as the base
-model.
+exists and the exported Rotation model passes its six-subtask smoke.
 
 Before evaluation, require the train-stage reward difficulty analysis manifest
 under the run directory. New queues generate it automatically. For a run
@@ -351,7 +327,7 @@ Legacy queues do not contain this manifest in `queue.complete`; after manual
 analysis, pass its path to `package_final_results.py` with
 `--reward-difficulty-manifest`.
 
-### 10. Run six benchmarks and aggregate the paper tables
+### 10. Run Rotation on the six benchmarks and detail splits
 
 Download and checksum all six paper datasets. The paper protocol is
 MMBench DEV-EN v1.1, the nine image dimensions of SEEDBench_IMG, VStarBench,
@@ -366,16 +342,11 @@ python scripts/evaluation/prepare_evaluation_data.py \
   --verify-only
 ```
 
-Evaluate the base and exported Rotation models with identical paper sampling
-parameters (`temperature=0.01`, `top-p=0.001`, `top-k=1`):
+Evaluate only the exported Rotation model with the paper sampling parameters
+(`temperature=0.01`, `top-p=0.001`, `top-k=1`). Base evaluation is rejected by
+the runner to prevent accidental duplicate inference:
 
 ```bash
-python scripts/evaluation/run_six_benchmarks.py \
-  --model-path "$FVE_MODEL_PATH" --model-name Base \
-  --model-role base \
-  --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT"
-
 python scripts/evaluation/run_six_benchmarks.py \
   --model-path <exported-hf-model> --model-name Rotation \
   --model-role rotation \
@@ -383,11 +354,11 @@ python scripts/evaluation/run_six_benchmarks.py \
   --output-root "$FVE_OUTPUT_ROOT"
 ```
 
-The runner writes each immutable attempt below a model/data/evaluator/config
-fingerprint. Keep the exact manifest paths printed by the two commands.
+The runner writes the immutable Rotation attempt below a
+model/data/evaluator/config fingerprint. Keep the exact manifest path printed.
 
-Create the paper's deterministic 60/40 split and evaluate both models on the
-same 40% held-out MMBench and SEED rows. MMBench is split by complete four-row
+Create the paper's deterministic 60/40 split and evaluate Rotation on the 40%
+held-out MMBench and SEED rows. MMBench is split by complete four-row
 circular groups; SEED is split by rows within each category. The paper does not
 publish its random seed, so this repository declares seed 42 and records every
 train/held-out index and checksum instead of implying that an unknown split was
@@ -399,54 +370,31 @@ python scripts/evaluation/prepare_detail_splits.py \
   --output-dir "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40"
 
 python scripts/evaluation/run_detail_benchmarks.py \
-  --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
-  --run-id <training-run-id> --gpu <one-gpu-index> \
-  --split-manifest "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40/detail_split_manifest.json" \
-  --output-root "$FVE_OUTPUT_ROOT"
-
-python scripts/evaluation/run_detail_benchmarks.py \
   --model-path <exported-hf-model> --model-name Rotation --model-role rotation \
   --run-id <training-run-id> --gpu <one-gpu-index> \
   --split-manifest "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40/detail_split_manifest.json" \
   --output-root "$FVE_OUTPUT_ROOT"
 ```
 
-Generate Table I plus held-out MMBench and SEED-Bench detail tables. Use the
-exact fingerprinted manifests printed by the runners:
-
-```bash
-python scripts/evaluation/aggregate_paper_tables.py \
-  --base-manifest <base-full-manifest> \
-  --rotation-manifest <rotation-full-manifest> \
-  --base-detail-manifest <base-detail-manifest> \
-  --rotation-detail-manifest <rotation-detail-manifest> \
-  --output-dir "$FVE_OUTPUT_ROOT/evaluation/tables/<training-run-id>"
-```
-
-The aggregator accepts either no detail manifests or a complete compatible
-Base/Rotation pair. It rejects naked score CSVs, one-sided overrides, changed
-scores, different held-out rows, model swaps, and protocol mismatches. Never
-substitute the Table I full-benchmark aggregate for a held-out detail score.
+Keep the full and detail Rotation manifests plus official score artifacts. Do
+not run `aggregate_paper_tables.py` on the target by generating a new Base
+manifest. Existing paper baseline values are reference data, not another GPU
+evaluation job.
 
 ### 11. Run MathVista and MMMU chain-of-thought evaluation
 
 Use `MathVista_MINI` and `MMMU_DEV_VAL`; do not silently substitute unlabeled
-test splits. Both Base and Rotation must use the explicit `<think>...</think>`
-and `<answer>...</answer>` reasoning prompts, 4,096 response tokens, and the
-same deterministic generation settings. Raw reasoning remains in prediction
-workbooks. MathVista uses the official DeepSeek `deepseek-chat` API as its
-auxiliary extraction judge, while MMMU uses exact matching. Never print, log,
-or commit the DeepSeek key; pass it with `--judge-api-key-file`.
+test splits. Evaluate only the exported Rotation model: the pinned Base model
+is an input checkpoint, not another experiment to rerun. Use the explicit
+`<think>...</think>` and `<answer>...</answer>` reasoning prompts, 4,096
+response tokens, and deterministic generation settings. Raw reasoning remains
+in prediction workbooks. MathVista uses the official DeepSeek `deepseek-chat`
+API as its auxiliary extraction judge, while MMMU uses exact matching. Never
+print, log, or commit the DeepSeek key; pass it with `--judge-api-key-file`.
 
 ```bash
 python scripts/evaluation/prepare_reasoning_data.py \
   --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval"
-
-python scripts/evaluation/run_reasoning_benchmarks.py \
-  --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
-  --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
-  --judge-api-key-file <deepseek-api-key.txt>
 
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path <export.exported_model> --model-name Rotation --model-role rotation \
@@ -455,7 +403,6 @@ python scripts/evaluation/run_reasoning_benchmarks.py \
   --judge-api-key-file <deepseek-api-key.txt>
 
 python scripts/evaluation/aggregate_reasoning_results.py \
-  --base-manifest <base-reasoning-manifest> \
   --rotation-manifest <rotation-reasoning-manifest> \
   --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/<training-run-id>"
 ```
@@ -464,27 +411,13 @@ The authoritative Rotation path is the `export.exported_model` field in the
 fingerprinted post-training manifest. See `EVALUATION.md` for DeepSeek routing,
 credential handling, provenance, and output details.
 
-### 12. Package the paper-table result bundle
+### 12. Preserve Rotation result artifacts
 
-Create a checksum sidecar and compressed, curated result bundle. Large
-checkpoints, datasets, and per-step reward Parquets are stream-hashed and
-inventoried rather than duplicated; tables, predictions, score artifacts, logs,
-and manifests are included. Packaging fails unless queue completion, the final
-committed checkpoint, reward summary, post-training smoke/export, Rotation data,
-full evaluations, detail lineage, and table inputs all agree.
-
-```bash
-python scripts/evaluation/package_final_results.py \
-  --run-id <training-run-id> \
-  --training-run-dir "$FVE_OUTPUT_ROOT/runs/<training-run-id>" \
-  --queue-manifest "$FVE_OUTPUT_ROOT/state/<training-run-id>/queue.complete" \
-  --post-training-manifest <post-training-manifest> \
-  --rotation-data-manifest "$FVE_DATA_ROOT/MMBench_RotationQA_90degree/manifest.json" \
-  --base-eval-manifest <base-full-manifest> \
-  --rotation-eval-manifest <rotation-full-manifest> \
-  --tables-dir "$FVE_OUTPUT_ROOT/evaluation/tables/<training-run-id>" \
-  --output-dir "$FVE_OUTPUT_ROOT/final"
-```
+Preserve the queue, reward analysis, post-training, full Rotation, detail
+Rotation, and reasoning manifests and their fingerprinted attempt directories.
+The legacy paired `package_final_results.py` requires a Base manifest and must
+not be invoked by launching Base inference. Rotation-only packaging will be
+handled from these existing artifacts without another model run.
 
 ## Editing and validation rules
 

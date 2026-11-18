@@ -13,7 +13,6 @@ from pathlib import Path
 
 from prepare_reasoning_data import DATASETS, digest
 from run_six_benchmarks import (
-    BASE_MODEL_REVISION,
     VLMEVAL_COMMIT,
     evaluator_fingerprint,
     model_fingerprint,
@@ -140,7 +139,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--model-name", required=True)
-    parser.add_argument("--model-role", choices=("base", "rotation"), required=True)
+    parser.add_argument("--model-role", choices=("rotation",), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--gpu", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
@@ -202,9 +201,7 @@ def main() -> None:
         },
     }
     model_provenance = model_fingerprint(model_path)
-    if args.model_role == "base" and model_provenance.get("huggingface_revision") != BASE_MODEL_REVISION:
-        raise SystemExit(f"Base reasoning evaluation requires pinned model revision {BASE_MODEL_REVISION}")
-    if args.model_role == "rotation" and model_provenance.get("artifact_type") != "fve_export":
+    if model_provenance.get("artifact_type") != "fve_export":
         raise SystemExit("Rotation reasoning evaluation requires an exported FVE checkpoint manifest")
     packages = subprocess.run(
         [str(eval_python), "-m", "pip", "freeze"], capture_output=True, text=True, check=True

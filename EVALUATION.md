@@ -1,5 +1,14 @@
 # FVE post-training evaluation
 
+## Target execution policy
+
+The target GPU job evaluates only the exported Rotation checkpoint. `Base`
+means the untouched pinned `Qwen/Qwen2.5-VL-3B-Instruct` initialization model;
+its existing paper/reference results must not be regenerated on the target.
+The full, detail, and reasoning runners reject `model-role=base` to prevent
+accidental duplicate inference. Legacy Base manifests may still be consumed
+offline by comparison utilities, but creating one is not part of this run.
+
 ## Evaluation objective
 
 After Rotation FVE training, evaluate the exported model on the original VQA
@@ -179,7 +188,7 @@ per-step reward Parquets.
 ## MathVista and MMMU reasoning evaluation
 
 The additional reasoning chain is deliberately separate from Tables I--III. It
-compares the same pinned Base and exported Rotation models on:
+evaluates only the exported Rotation model on:
 
 - `MathVista_MINI`, the labeled 1,000-example MathVista mini test set supported
   by the pinned VLMEvalKit;
@@ -211,15 +220,10 @@ python scripts/evaluation/prepare_reasoning_data.py \
 
 The Rotation model path is the `export.exported_model` value in the successful
 fingerprinted `post_training_manifest.json`; it is never inferred from the
-largest checkpoint directory. Run Base and Rotation with identical settings:
+largest checkpoint directory. Do not rerun the untrained Base model for these
+additional benchmarks.
 
 ```bash
-python scripts/evaluation/run_reasoning_benchmarks.py \
-  --model-path "$FVE_MODEL_PATH" --model-name Base --model-role base \
-  --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
-  --judge-api-key-file <deepseek-api-key.txt>
-
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path <export.exported_model> --model-name Rotation --model-role rotation \
   --run-id <training-run-id> --gpu <one-gpu-index> \
@@ -233,12 +237,11 @@ Compare only compatible attempts:
 
 ```bash
 python scripts/evaluation/aggregate_reasoning_results.py \
-  --base-manifest <base-reasoning-manifest> \
   --rotation-manifest <rotation-reasoning-manifest> \
   --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/<training-run-id>"
 ```
 
-The resulting CSV/JSON reports MathVista and MMMU percentages, Rotation-minus-
-Base changes, and reasoning-format coverage. The default response budget is
+The resulting CSV/JSON reports Rotation MathVista/MMMU percentages and
+reasoning-format coverage. The default response budget is
 4,096 tokens and uses deterministic sampling (`temperature=0.01`, `top-p=0.001`,
 `top-k=1`).

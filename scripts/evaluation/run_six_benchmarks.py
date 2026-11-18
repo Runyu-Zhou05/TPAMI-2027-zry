@@ -15,7 +15,6 @@ from prepare_evaluation_data import DATASETS, digest
 
 
 VLMEVAL_COMMIT = "0a11917eede83742389b03d7f11fc252aabdf6ef"
-BASE_MODEL_REVISION = "66285546d2b821cf421d4f5eb2576359d3770cd3"
 BENCHMARKS = {
     "MMBench_DEV_EN_V11": {"class": "ImageMCQDataset", "dataset": "MMBench_DEV_EN_V11"},
     "SEEDBench_IMG": {"class": "ImageMCQDataset", "dataset": "SEEDBench_IMG"},
@@ -241,7 +240,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--model-name", required=True, help="Output label, for example Base or Rotation")
-    parser.add_argument("--model-role", choices=("base", "rotation"), required=True)
+    parser.add_argument("--model-role", choices=("rotation",), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--gpu", required=True, help="Exactly one physical GPU index")
     parser.add_argument("--output-root", type=Path, required=True)
@@ -288,9 +287,7 @@ def main() -> None:
         "data": BENCHMARKS,
     }
     model_provenance = model_fingerprint(model_path)
-    if args.model_role == "base" and model_provenance.get("huggingface_revision") != BASE_MODEL_REVISION:
-        raise SystemExit(f"Base evaluation requires pinned model revision {BASE_MODEL_REVISION}")
-    if args.model_role == "rotation" and model_provenance.get("artifact_type") != "fve_export":
+    if model_provenance.get("artifact_type") != "fve_export":
         raise SystemExit("Rotation evaluation requires an exported FVE checkpoint manifest")
     package_freeze = subprocess.run(
         [str(eval_python), "-m", "pip", "freeze"], capture_output=True, text=True, check=True

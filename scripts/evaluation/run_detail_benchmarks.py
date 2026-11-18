@@ -13,7 +13,6 @@ from pathlib import Path
 import prepare_detail_splits as detail_splits
 from prepare_evaluation_data import DATASETS, digest
 from run_six_benchmarks import (
-    BASE_MODEL_REVISION,
     VLMEVAL_COMMIT,
     evaluator_fingerprint,
     model_fingerprint,
@@ -109,7 +108,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--model-name", required=True)
-    parser.add_argument("--model-role", choices=("base", "rotation"), required=True)
+    parser.add_argument("--model-role", choices=("rotation",), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--gpu", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
@@ -157,9 +156,7 @@ def main() -> None:
         "data": DETAIL_CONFIG,
     }
     model_provenance = model_fingerprint(model_path)
-    if args.model_role == "base" and model_provenance.get("huggingface_revision") != BASE_MODEL_REVISION:
-        raise SystemExit(f"Base detail evaluation requires pinned model revision {BASE_MODEL_REVISION}")
-    if args.model_role == "rotation" and model_provenance.get("artifact_type") != "fve_export":
+    if model_provenance.get("artifact_type") != "fve_export":
         raise SystemExit("Rotation detail evaluation requires an exported FVE checkpoint manifest")
     package_freeze = subprocess.run(
         [str(eval_python), "-m", "pip", "freeze"], capture_output=True, text=True, check=True
