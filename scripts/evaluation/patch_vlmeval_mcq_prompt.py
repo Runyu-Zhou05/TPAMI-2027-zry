@@ -7,7 +7,10 @@ import argparse
 from pathlib import Path
 
 
-MARKER = "The last line of your response should be of the following format:"
+# This exact tag sequence is unique to the SSL4RL patch. The pinned
+# image_mcq.py already contains a generic "last line" sentence in an unrelated
+# MMMU-Pro COT branch, so that phrase cannot be used as an idempotence marker.
+MARKER = "<think>step-by-step reasoning</think> <answer>$LETTER</answer>"
 
 
 def main() -> None:

@@ -166,7 +166,11 @@ class PromptProtocolTest(unittest.TestCase):
     def test_mcq_prompt_patch_is_idempotent_and_pixel_budget_is_corrected(self):
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "image_mcq.py"
-            target.write_text("            prompt += 'Please select the correct answer from the options above. \\n'\n")
+            target.write_text(
+                "# Unrelated pinned MMMU-Pro branch:\n"
+                "UNRELATED = 'The last line of your response should be of the following format:'\n"
+                "            prompt += 'Please select the correct answer from the options above. \\n'\n"
+            )
             command = [sys.executable, str(EVAL_SCRIPTS / "patch_vlmeval_mcq_prompt.py"), str(target)]
             subprocess.run(command, check=True, capture_output=True, text=True)
             first = target.read_text()

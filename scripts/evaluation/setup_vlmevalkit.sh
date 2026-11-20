@@ -61,9 +61,12 @@ import transformers
 import vlmeval
 from vlmeval.dataset import ImageMCQDataset, MathVista, MMMUDataset
 from vlmeval.vlm import Qwen2VLChat
+from pathlib import Path
 
 assert numpy.__version__ == "1.26.4"
 assert transformers.__version__ == "4.55.2"
+image_mcq = Path(vlmeval.__file__).resolve().parent / "dataset" / "image_mcq.py"
+assert "<think>step-by-step reasoning</think> <answer>$LETTER</answer>" in image_mcq.read_text()
 print({"numpy": numpy.__version__, "torch": torch.__version__, "transformers": transformers.__version__})
 print("VLMEvalKit Qwen2.5-VL, MMBench, MathVista, and MMMU imports OK")
 PY

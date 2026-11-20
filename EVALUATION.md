@@ -65,6 +65,11 @@ It also applies the SSL4RL upstream README's MCQ prompt patch, requiring a
 Qwen/VLMEvalKit value `1280×28×28 = 1,003,520`; `max_pixels` remains
 `16384×28×28 = 12,845,056`.
 
+The setup gate verifies the exact tag sequence in the generic `image_mcq.py`
+prompt. Do not use the generic phrase "The last line..." as the patch marker:
+the pinned source already contains it in an unrelated MMMU-Pro branch, which
+previously caused a false "already applied" result and answer-only evaluation.
+
 ## Validated MMBench smoke on 247
 
 On 2026-11-15, the complete base-model smoke succeeded with:
