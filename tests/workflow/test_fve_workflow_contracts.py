@@ -29,6 +29,7 @@ detail_splits = importlib.import_module("prepare_detail_splits")
 export_checkpoint = importlib.import_module("export_fve_checkpoint")
 detail_runner = importlib.import_module("run_detail_benchmarks")
 package_results = importlib.import_module("package_final_results")
+full_runner = importlib.import_module("run_six_benchmarks")
 
 
 def sha256(path: Path) -> str:
@@ -163,7 +164,7 @@ class CommittedExportTest(unittest.TestCase):
 
 
 class PromptProtocolTest(unittest.TestCase):
-    def test_mcq_prompt_patch_is_idempotent_and_pixel_budget_is_corrected(self):
+    def test_mcq_prompt_patch_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "image_mcq.py"
             target.write_text(
@@ -177,9 +178,49 @@ class PromptProtocolTest(unittest.TestCase):
             subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertEqual(target.read_text(), first)
             self.assertIn("<think>step-by-step reasoning</think> <answer>$LETTER</answer>", first)
-        runner = (EVAL_SCRIPTS / "run_six_benchmarks.py").read_text()
-        self.assertIn('"min_pixels": 1280 * 28 * 28', runner)
-        self.assertNotIn('"min_pixels": 35840', runner)
+
+    def test_paper_job_matrix_is_explicit(self):
+        base = full_runner.resolve_benchmarks("paper-readme", "base", "mmbench")
+        rotation = full_runner.resolve_benchmarks("paper-readme", "rotation", "six")
+        current = full_runner.resolve_benchmarks("current", "rotation", "six")
+        self.assertEqual(list(base), ["MMBench_DEV_EN"])
+        self.assertEqual(set(rotation), set(full_runner.PAPER_BENCHMARKS))
+        self.assertEqual(set(current), set(full_runner.CURRENT_BENCHMARKS))
+        for invalid in (
+            ("paper-readme", "base", "six"),
+            ("current", "base", "mmbench"),
+            ("current", "base", "six"),
+            ("paper-readme", "rotation", "mmbench"),
+        ):
+            with self.assertRaises(SystemExit, msg=invalid):
+                full_runner.resolve_benchmarks(*invalid)
+
+    def test_paper_config_uses_literal_readme_budget(self):
+        benchmarks = full_runner.resolve_benchmarks("paper-readme", "base", "mmbench")
+        config = full_runner.build_config(Path("/base"), "BasePaper", "paper-readme", benchmarks)
+        model = config["model"]["BasePaper"]
+        self.assertEqual(model["min_pixels"], 35_840)
+        self.assertEqual(model["max_pixels"], 12_845_056)
+        self.assertEqual(model["max_new_tokens"], 2048)
+        self.assertEqual(config["data"], {"MMBench_DEV_EN": full_runner.PAPER_BENCHMARKS["MMBench_DEV_EN"]})
+        self.assertEqual(full_runner.DATASETS["MMBench_DEV_EN"]["md5"], "b6caf1133a01c6bb705cf753bb527ed8")
+        self.assertEqual(
+            full_runner.DATASETS["MMBench_DEV_EN"]["url"],
+            "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_DEV_EN.tsv",
+        )
+
+    def test_exact_ssl4rl_prompt_marker_is_required_once(self):
+        marker = "<think>step-by-step reasoning</think> <answer>$LETTER</answer>"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "vlmeval" / "dataset" / "image_mcq.py"
+            path.parent.mkdir(parents=True)
+            path.write_text(marker)
+            self.assertEqual(full_runner.verify_ssl4rl_prompt(root)["marker"], marker)
+            for source in ("", marker + "\n" + marker):
+                path.write_text(source)
+                with self.assertRaises(SystemExit):
+                    full_runner.verify_ssl4rl_prompt(root)
 
 
 class TableLineageTest(unittest.TestCase):

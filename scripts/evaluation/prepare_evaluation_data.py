@@ -15,6 +15,11 @@ from pathlib import Path
 
 
 DATASETS = {
+    "MMBench_DEV_EN": {
+        "url": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_DEV_EN.tsv",
+        "md5": "b6caf1133a01c6bb705cf753bb527ed8",
+        "curl_insecure": True,
+    },
     "MMBench_DEV_EN_V11": {
         "url": "https://opencompass.openxlab.space/utils/benchmarks/MMBench/MMBench_DEV_EN_V11.tsv",
         "md5": "30c05be8f2f347a50be25aa067248184",
@@ -134,7 +139,7 @@ def main() -> None:
         "benchmarks": existing_files,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "protocol": {
-            "MMBench": "MMBench_DEV_EN_V11 (paper reports DEV-EN)",
+            "MMBench": "Both checksum-pinned MMBench_DEV_EN (paper README) and MMBench_DEV_EN_V11 are available",
             "MME": "MME-RealWorld-Lite, not standard MME",
             "SEEDBench": "SEEDBench_IMG, nine image-understanding dimensions",
             "VStar": "VStarBench standard VLMEvalKit MCQ evaluation",

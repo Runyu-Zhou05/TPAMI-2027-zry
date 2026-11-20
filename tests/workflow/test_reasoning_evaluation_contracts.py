@@ -189,10 +189,12 @@ class ReasoningWorkflowTest(unittest.TestCase):
         self.assertIn('default="deepseek-chat"', runner)
         self.assertIn('choices=("rotation",)', runner)
         self.assertIn("https://api.deepseek.com/chat/completions", runner)
-        for script in ("run_six_benchmarks.py", "run_detail_benchmarks.py"):
-            source = (EVAL / script).read_text()
-            self.assertIn('choices=("rotation",)', source)
-            self.assertNotIn('choices=("base", "rotation")', source)
+        full_runner = (EVAL / "run_six_benchmarks.py").read_text()
+        self.assertIn('("paper-readme", "base", "mmbench")', full_runner)
+        self.assertIn('("paper-readme", "rotation", "six")', full_runner)
+        self.assertIn("min_pixels = 35_840", full_runner)
+        detail_runner = (EVAL / "run_detail_benchmarks.py").read_text()
+        self.assertIn('choices=("rotation",)', detail_runner)
 
 
 if __name__ == "__main__":

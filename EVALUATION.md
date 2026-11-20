@@ -2,12 +2,11 @@
 
 ## Target execution policy
 
-The target GPU job evaluates only the exported Rotation checkpoint. `Base`
-means the untouched pinned `Qwen/Qwen2.5-VL-3B-Instruct` initialization model;
-its existing paper/reference results must not be regenerated on the target.
-The full, detail, and reasoning runners reject `model-role=base` to prevent
-accidental duplicate inference. Legacy Base manifests may still be consumed
-offline by comparison utilities, but creating one is not part of this run.
+The paper-reproduction job has exactly two allowed evaluations: the untouched
+pinned `Qwen/Qwen2.5-VL-3B-Instruct` Base on old `MMBench_DEV_EN`, and the
+exported Rotation checkpoint on all six benchmarks. Both use the literal README
+pixel budget and the verified generic ImageMCQ COT prompt. MathVista/MMMU remain
+Rotation-only. Other Base/full-benchmark combinations are rejected.
 
 ## Evaluation objective
 
@@ -60,10 +59,12 @@ uses `config.json` model type and architectures instead, so exported checkpoint
 directories can use arbitrary run and step names.
 
 It also applies the SSL4RL upstream README's MCQ prompt patch, requiring a
-`<think>...</think> <answer>$LETTER</answer>` final response. The README value
-`min_pixels=35840` is treated as a missing-`×28` typo: evaluation keeps the
-Qwen/VLMEvalKit value `1280×28×28 = 1,003,520`; `max_pixels` remains
-`16384×28×28 = 12,845,056`.
+`<think>...</think> <answer>$LETTER</answer>` final response. The normal
+`current` protocol uses the corrected Qwen/VLMEvalKit value
+`1280×28×28 = 1,003,520`. The dedicated `paper-readme` reproduction protocol
+instead preserves the historical literal value `min_pixels=35840` so the Base
+run can test whether that setting explains the reported 72.99. Both protocols
+use `max_pixels=16384×28×28 = 12,845,056`.
 
 The setup gate verifies the exact tag sequence in the generic `image_mcq.py`
 prompt. Do not use the generic phrase "The last line..." as the patch marker:
@@ -159,6 +160,22 @@ resolution, export validation, and MMBench smoke as one guarded command.
 `prepare_evaluation_data.py` pins URLs and checksums for all six datasets.
 `run_six_benchmarks.py` builds the fixed VLMEvalKit config and refuses success
 unless every benchmark emits an official score artifact.
+
+For literal paper reproduction, the only valid jobs are:
+
+```text
+BasePaper: model-role=base, protocol=paper-readme, benchmark-scope=mmbench
+Rotation:  model-role=rotation, protocol=paper-readme, benchmark-scope=six
+```
+
+Both use old `MMBench_DEV_EN`, `min_pixels=35840`, `max_pixels=12845056`,
+`max_new_tokens=2048`, and the exact verified SSL4RL COT prompt. The fingerprint
+and output directory differ from all earlier direct-answer attempts, and the
+first invocation must not use `--resume`. This generic prompt covers MMBench,
+SEEDBench_IMG, VStarBench, RealWorldQA, and BLINK. The pinned
+`MMERealWorld` subclass overrides `build_prompt` with its upstream answer-only
+instruction; leaving that override intact is part of reproducing the actual
+evaluator rather than silently changing a seventh configuration variable.
 
 `prepare_detail_splits.py` implements the paper's downstream-benchmark 60/40
 protocol for Tables II/III. It preserves complete MMBench circular groups,

@@ -267,10 +267,10 @@ export FVE_EVAL_ROOT="$FVE_OUTPUT_ROOT/tools/vlmevalkit"
 bash scripts/evaluation/setup_vlmevalkit.sh "$FVE_EVAL_ROOT"
 ```
 
-Do not run Base-model inference here. The original Qwen2.5-VL-3B checkpoint is
-only the initialization source, and its earlier smoke evidence is already
-documented in `EVALUATION.md`. The target job evaluates only the exported
-Rotation checkpoint after training.
+This step only installs and validates the evaluator; do not launch full
+inference yet. Step 10 later runs one intentional Base calibration on old
+MMBench DEV-EN, followed by the exported Rotation checkpoint on all six
+benchmarks.
 
 ### 8. Run the guarded Rotation queue
 
@@ -327,59 +327,50 @@ Legacy queues do not contain this manifest in `queue.complete`; after manual
 analysis, pass its path to `package_final_results.py` with
 `--reward-difficulty-manifest`.
 
-### 10. Run Rotation on the six benchmarks and detail splits
+### 10. Reproduce the paper evaluation protocol
 
-Download and checksum all six paper datasets. The paper protocol is
-MMBench DEV-EN v1.1, the nine image dimensions of SEEDBench_IMG, VStarBench,
+Download and checksum all six paper datasets. The reproduction protocol is old
+MMBench DEV-EN, the nine image dimensions of SEEDBench_IMG, VStarBench,
 RealWorldQA, BLINK, and MME-RealWorld-Lite (the paper's abbreviated `MME`
 column is not standard MME).
 
 ```bash
 python scripts/evaluation/prepare_evaluation_data.py \
-  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval"
+  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" \
+  --benchmarks MMBench_DEV_EN SEEDBench_IMG VStarBench RealWorldQA BLINK MME-RealWorld-Lite
 python scripts/evaluation/prepare_evaluation_data.py \
   --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" \
+  --benchmarks MMBench_DEV_EN SEEDBench_IMG VStarBench RealWorldQA BLINK MME-RealWorld-Lite \
   --verify-only
 ```
 
-Evaluate only the exported Rotation model with the paper sampling parameters
-(`temperature=0.01`, `top-p=0.001`, `top-k=1`). Base evaluation is rejected by
-the runner to prevent accidental duplicate inference:
+Run exactly two fresh, fingerprinted attempts: Base on old MMBench DEV-EN to
+test reproduction of the paper's 72.99 baseline, and exported Rotation on all
+six benchmarks. Both use `min_pixels=35840`, the verified generic ImageMCQ COT
+prompt, and paper sampling (`temperature=0.01`, `top-p=0.001`, `top-k=1`). The
+pinned `MMERealWorld` class intentionally retains its own answer-only prompt,
+which matches the upstream evaluator path rather than inventing a new patch.
+Do not use `--resume` on the first invocation and do not copy/reuse old
+direct-answer predictions.
 
 ```bash
 python scripts/evaluation/run_six_benchmarks.py \
+  --model-path "$FVE_MODEL_PATH" --model-name BasePaper \
+  --model-role base --protocol paper-readme --benchmark-scope mmbench \
+  --run-id <training-run-id>-base-paper --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT"
+
+python scripts/evaluation/run_six_benchmarks.py \
   --model-path <exported-hf-model> --model-name Rotation \
-  --model-role rotation \
-  --run-id <training-run-id> --gpu <one-gpu-index> \
+  --model-role rotation --protocol paper-readme --benchmark-scope six \
+  --run-id <training-run-id>-rotation-paper --gpu <one-gpu-index> \
   --output-root "$FVE_OUTPUT_ROOT"
 ```
 
-The runner writes the immutable Rotation attempt below a
-model/data/evaluator/config fingerprint. Keep the exact manifest path printed.
-
-Create the paper's deterministic 60/40 split and evaluate Rotation on the 40%
-held-out MMBench and SEED rows. MMBench is split by complete four-row
-circular groups; SEED is split by rows within each category. The paper does not
-publish its random seed, so this repository declares seed 42 and records every
-train/held-out index and checksum instead of implying that an unknown split was
-recovered.
-
-```bash
-python scripts/evaluation/prepare_detail_splits.py \
-  --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" \
-  --output-dir "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40"
-
-python scripts/evaluation/run_detail_benchmarks.py \
-  --model-path <exported-hf-model> --model-name Rotation --model-role rotation \
-  --run-id <training-run-id> --gpu <one-gpu-index> \
-  --split-manifest "$FVE_OUTPUT_ROOT/inputs/vlmeval_detail_60_40/detail_split_manifest.json" \
-  --output-root "$FVE_OUTPUT_ROOT"
-```
-
-Keep the full and detail Rotation manifests plus official score artifacts. Do
-not run `aggregate_paper_tables.py` on the target by generating a new Base
-manifest. Existing paper baseline values are reference data, not another GPU
-evaluation job.
+The runner permits only `Base+MMBench` and `Rotation+six` under
+`paper-readme`. Keep both manifests, configs, logs, predictions, score files,
+and the reported reasoning-format coverage. Base must be compared to 72.99
+before interpreting the Rotation-to-paper comparison.
 
 ### 11. Run MathVista and MMMU chain-of-thought evaluation
 
@@ -411,13 +402,13 @@ The authoritative Rotation path is the `export.exported_model` field in the
 fingerprinted post-training manifest. See `EVALUATION.md` for DeepSeek routing,
 credential handling, provenance, and output details.
 
-### 12. Preserve Rotation result artifacts
+### 12. Preserve result artifacts
 
-Preserve the queue, reward analysis, post-training, full Rotation, detail
-Rotation, and reasoning manifests and their fingerprinted attempt directories.
-The legacy paired `package_final_results.py` requires a Base manifest and must
-not be invoked by launching Base inference. Rotation-only packaging will be
-handled from these existing artifacts without another model run.
+Preserve the queue, reward analysis, post-training, BasePaper MMBench, full
+Rotation, detail Rotation, and reasoning manifests and their fingerprinted
+attempt directories. Do not substitute the BasePaper MMBench-only manifest for
+a legacy six-benchmark Base manifest: the paper-reproduction attempts are a
+separate comparison and must remain immutable.
 
 ## Editing and validation rules
 

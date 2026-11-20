@@ -15,13 +15,24 @@ from prepare_evaluation_data import DATASETS, digest
 
 
 VLMEVAL_COMMIT = "0a11917eede83742389b03d7f11fc252aabdf6ef"
-BENCHMARKS = {
+BASE_MODEL_REVISION = "66285546d2b821cf421d4f5eb2576359d3770cd3"
+CURRENT_BENCHMARKS = {
     "MMBench_DEV_EN_V11": {"class": "ImageMCQDataset", "dataset": "MMBench_DEV_EN_V11"},
     "SEEDBench_IMG": {"class": "ImageMCQDataset", "dataset": "SEEDBench_IMG"},
     "VStarBench": {"class": "ImageMCQDataset", "dataset": "VStarBench"},
     "RealWorldQA": {"class": "ImageMCQDataset", "dataset": "RealWorldQA"},
     "BLINK": {"class": "ImageMCQDataset", "dataset": "BLINK"},
     "MME-RealWorld-Lite": {"class": "MMERealWorld", "dataset": "MME-RealWorld-Lite"},
+}
+PAPER_BENCHMARKS = {
+    "MMBench_DEV_EN": {"class": "ImageMCQDataset", "dataset": "MMBench_DEV_EN"},
+    **{name: config for name, config in CURRENT_BENCHMARKS.items() if name != "MMBench_DEV_EN_V11"},
+}
+BENCHMARKS = CURRENT_BENCHMARKS  # Backward-compatible default for imported helpers.
+ALLOWED_JOBS = {
+    ("current", "rotation", "six"),
+    ("paper-readme", "base", "mmbench"),
+    ("paper-readme", "rotation", "six"),
 }
 MODEL_METADATA_FILES = (
     "chat_template.json",
@@ -167,9 +178,55 @@ def evaluator_fingerprint(vlmeval_root: Path) -> dict:
     return {"commit": VLMEVAL_COMMIT, "files": {str(path.relative_to(vlmeval_root)): sha256_file(path) for path in files}}
 
 
-def dataset_fingerprint(lmu_root: Path, manifest: dict) -> dict:
+def verify_ssl4rl_prompt(vlmeval_root: Path) -> dict:
+    path = vlmeval_root / "vlmeval" / "dataset" / "image_mcq.py"
+    marker = "<think>step-by-step reasoning</think> <answer>$LETTER</answer>"
+    source = path.read_text()
+    if source.count(marker) != 1:
+        raise SystemExit(f"Generic SSL4RL MCQ prompt is missing or ambiguous: {path}")
+    return {"file": str(path), "marker": marker, "sha256": sha256_file(path)}
+
+
+def resolve_benchmarks(protocol: str, model_role: str, benchmark_scope: str) -> dict:
+    """Validate an evaluation job and return its exact benchmark mapping."""
+    job = (protocol, model_role, benchmark_scope)
+    if job not in ALLOWED_JOBS:
+        raise SystemExit(
+            f"Unsupported evaluation job {job}; paper reproduction permits only "
+            "Base+MMBench or Rotation+six"
+        )
+    family = PAPER_BENCHMARKS if protocol == "paper-readme" else CURRENT_BENCHMARKS
+    if benchmark_scope == "mmbench":
+        name = "MMBench_DEV_EN" if protocol == "paper-readme" else "MMBench_DEV_EN_V11"
+        return {name: family[name]}
+    return family
+
+
+def build_config(model_path: Path, model_name: str, protocol: str, benchmarks: dict) -> dict:
+    """Build the immutable VLMEvalKit config for the selected protocol."""
+    min_pixels = 35_840 if protocol == "paper-readme" else 1280 * 28 * 28
+    return {
+        "model": {
+            model_name: {
+                "class": "Qwen2VLChat",
+                "model_path": str(model_path),
+                "min_pixels": min_pixels,
+                "max_pixels": 16384 * 28 * 28,
+                "max_new_tokens": 2048,
+                "top_p": 0.001,
+                "top_k": 1,
+                "temperature": 0.01,
+                "repetition_penalty": 1.0,
+                "use_custom_prompt": False,
+            }
+        },
+        "data": benchmarks,
+    }
+
+
+def dataset_fingerprint(lmu_root: Path, manifest: dict, benchmarks: dict | None = None) -> dict:
     result = {}
-    for name in BENCHMARKS:
+    for name in benchmarks or BENCHMARKS:
         info = manifest.get("benchmarks", {}).get(name)
         if not isinstance(info, dict):
             raise SystemExit(f"Evaluation data manifest is missing {name}")
@@ -236,11 +293,37 @@ print(json.dumps({'rows': len(p), 'sorted_index_sha256': hashlib.sha256(canonica
     return result
 
 
+def prediction_format_coverage(eval_python: Path, predictions: dict[str, dict]) -> dict:
+    checker = r'''
+import json, pandas as pd, sys
+result = {}
+for item in sys.argv[1:]:
+    name, path = item.split("=", 1)
+    values = [str(x) for x in pd.read_excel(path, usecols=["prediction"])["prediction"].tolist()]
+    complete = ["<think>" in x and "</think>" in x and "<answer>" in x and "</answer>" in x for x in values]
+    result[name] = {
+        "complete_reasoning_format_rows": sum(complete),
+        "complete_reasoning_format_rate": sum(complete) / len(values) if values else 0.0,
+        "max_characters": max(map(len, values)) if values else 0,
+        "mean_characters": sum(map(len, values)) / len(values) if values else 0.0,
+        "rows": len(values),
+    }
+print(json.dumps(result))
+'''
+    arguments = [f"{name}={record['path']}" for name, record in predictions.items()]
+    completed = subprocess.run(
+        [str(eval_python), "-c", checker, *arguments], capture_output=True, text=True, check=True
+    )
+    return json.loads(completed.stdout)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--model-name", required=True, help="Output label, for example Base or Rotation")
-    parser.add_argument("--model-role", choices=("rotation",), required=True)
+    parser.add_argument("--model-role", choices=("base", "rotation"), required=True)
+    parser.add_argument("--protocol", choices=("current", "paper-readme"), required=True)
+    parser.add_argument("--benchmark-scope", choices=("mmbench", "six"), required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--gpu", required=True, help="Exactly one physical GPU index")
     parser.add_argument("--output-root", type=Path, required=True)
@@ -255,6 +338,7 @@ def main() -> None:
             raise SystemExit(f"--{label} contains unsupported characters: {value!r}")
     if "," in args.gpu or not args.gpu.isdigit():
         raise SystemExit("--gpu must be exactly one physical GPU index")
+    benchmarks = resolve_benchmarks(args.protocol, args.model_role, args.benchmark_scope)
 
     output_root = args.output_root.expanduser().resolve()
     eval_root = (args.eval_root or output_root / "tools" / "vlmevalkit").expanduser().resolve()
@@ -269,37 +353,26 @@ def main() -> None:
     if not data_manifest_path.is_file():
         raise SystemExit(f"Run prepare_evaluation_data.py first: {data_manifest_path}")
     data_manifest = json.loads(data_manifest_path.read_text())
-    config = {
-        "model": {
-            args.model_name: {
-                "class": "Qwen2VLChat",
-                "model_path": str(model_path),
-                "min_pixels": 1280 * 28 * 28,
-                "max_pixels": 16384 * 28 * 28,
-                "max_new_tokens": 2048,
-                "top_p": 0.001,
-                "top_k": 1,
-                "temperature": 0.01,
-                "repetition_penalty": 1.0,
-                "use_custom_prompt": False,
-            }
-        },
-        "data": BENCHMARKS,
-    }
+    config = build_config(model_path, args.model_name, args.protocol, benchmarks)
     model_provenance = model_fingerprint(model_path)
-    if model_provenance.get("artifact_type") != "fve_export":
+    if args.model_role == "base" and model_provenance.get("huggingface_revision") != BASE_MODEL_REVISION:
+        raise SystemExit(f"Base evaluation requires pinned model revision {BASE_MODEL_REVISION}")
+    if args.model_role == "rotation" and model_provenance.get("artifact_type") != "fve_export":
         raise SystemExit("Rotation evaluation requires an exported FVE checkpoint manifest")
     package_freeze = subprocess.run(
         [str(eval_python), "-m", "pip", "freeze"], capture_output=True, text=True, check=True
     ).stdout.splitlines()
     provenance = {
         "config": config,
-        "data": dataset_fingerprint(lmu_root, data_manifest),
+        "benchmark_scope": args.benchmark_scope,
+        "data": dataset_fingerprint(lmu_root, data_manifest, benchmarks),
         "data_manifest_sha256": sha256_file(data_manifest_path),
         "evaluator": evaluator_fingerprint(vlmeval_root),
         "model": model_provenance,
         "model_role": args.model_role,
         "package_freeze": package_freeze,
+        "prompt_protocol": verify_ssl4rl_prompt(vlmeval_root),
+        "protocol": args.protocol,
     }
     fingerprint = sha256_bytes(json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode())
     attempt_name = f"{args.model_name}-{fingerprint[:16]}"
@@ -335,9 +408,9 @@ def main() -> None:
             completed = json.loads(manifest_path.read_text())
             if completed.get("attempt_fingerprint") != fingerprint:
                 raise SystemExit(f"Completed evaluation fingerprint mismatch: {manifest_path}")
-            if set(completed.get("score_artifacts", {})) != set(BENCHMARKS) or set(
+            if set(completed.get("score_artifacts", {})) != set(benchmarks) or set(
                 completed.get("prediction_artifacts", {})
-            ) != set(BENCHMARKS):
+            ) != set(benchmarks):
                 raise SystemExit(f"Completed evaluation manifest is incomplete: {manifest_path}")
             for name, artifact in completed.get("score_artifacts", {}).items():
                 if sha256_file(Path(artifact)) != completed.get("score_artifact_sha256", {}).get(name):
@@ -359,16 +432,17 @@ def main() -> None:
     log_path = work_dir / "six_benchmark.log"
     with log_path.open("a" if args.resume else "x", buffering=1) as log:
         subprocess.run(command, cwd=vlmeval_root, env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
-    scores = require_scores(work_dir, args.model_name)
-    predictions = require_prediction_coverage(eval_python, work_dir, args.model_name, lmu_root)
+    scores = require_scores(work_dir, args.model_name, benchmarks)
+    predictions = require_prediction_coverage(eval_python, work_dir, args.model_name, lmu_root, benchmarks)
     score_hashes = {dataset: sha256_file(Path(path)) for dataset, path in scores.items()}
     manifest = {
         "attempt_fingerprint": fingerprint,
-        "benchmarks": list(BENCHMARKS),
+        "benchmark_scope": args.benchmark_scope,
+        "benchmarks": list(benchmarks),
         "command": command,
         "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         "data_manifest": str(data_manifest_path),
-        "evaluation_role": "full_six_benchmarks",
+        "evaluation_role": f"{args.protocol}_{args.model_role}_{args.benchmark_scope}",
         "gpu": args.gpu,
         "model_name": args.model_name,
         "model_path": str(model_path),
@@ -376,6 +450,8 @@ def main() -> None:
         "package_freeze": package_freeze,
         "provenance": provenance,
         "prediction_artifacts": predictions,
+        "prediction_format_coverage": prediction_format_coverage(eval_python, predictions),
+        "protocol": args.protocol,
         "run_id": args.run_id,
         "schema_version": 2,
         "score_artifact_sha256": score_hashes,
