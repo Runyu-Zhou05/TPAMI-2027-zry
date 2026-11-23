@@ -210,7 +210,8 @@ per-step reward Parquets.
 ## MathVista and MMMU reasoning evaluation
 
 The additional reasoning chain is deliberately separate from Tables I--III. It
-evaluates only the exported Rotation model on:
+supports both the legacy exported Rotation FVE model and the four normal
+paper-recipe SSL4RL models (Position, Rotation, Jigsaw, Contrastive) on:
 
 - `MathVista_MINI`, the labeled 1,000-example MathVista mini test set supported
   by the pinned VLMEvalKit;
@@ -229,7 +230,12 @@ required by the experiment protocol; MMMU is scored with `exact_matching` and
 does not depend on that judge. The setup patch adds a distinct
 `deepseek-chat` route because the pinned VLMEvalKit name `deepseek` refers to
 SiliconFlow rather than the official DeepSeek endpoint. It also redacts API keys
-from VLMEvalKit logs.
+from VLMEvalKit logs. For the trusted four-task handoff, the credential is
+Base64-encoded in `deepseek_api_key_b64.py` and decoded only in process memory;
+the plaintext is never written to configs, logs, manifests, or temporary files.
+`python scripts/evaluation/smoke_reasoning_judges.py` validates a synthetic
+MathVista extraction through the live DeepSeek API plus a synthetic MMMU exact
+match without loading a vision-language model.
 
 Download and verify both reasoning datasets:
 
@@ -240,30 +246,34 @@ python scripts/evaluation/prepare_reasoning_data.py \
   --lmu-data-root "$FVE_OUTPUT_ROOT/inputs/vlmeval" --verify-only
 ```
 
-The Rotation model path is the `export.exported_model` value in the successful
-fingerprinted `post_training_manifest.json`; it is never inferred from the
-largest checkpoint directory. Do not rerun the untrained Base model for these
-additional benchmarks.
+The FVE Rotation model path is the `export.exported_model` value in the
+successful fingerprinted `post_training_manifest.json`. Normal four-task
+checkpoints must first be exported with `--artifact-type ssl4rl_export` and the
+correct `--model-role`; task identities cannot be relabeled at evaluation time.
 
 ```bash
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path <export.exported_model> --model-name Rotation --model-role rotation \
   --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
-  --judge-api-key-file <deepseek-api-key.txt>
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat
 ```
 
 Each immutable attempt is written under
 `$FVE_OUTPUT_ROOT/evaluation/reasoning/<run-id>/<model>-<fingerprint>/`.
-Compare only compatible attempts:
+For the four normal task models, repeat export and evaluation with the matching
+role, then compare only compatible attempts:
 
 ```bash
 python scripts/evaluation/aggregate_reasoning_results.py \
+  --position-manifest <position-reasoning-manifest> \
   --rotation-manifest <rotation-reasoning-manifest> \
-  --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/<training-run-id>"
+  --jigsaw-manifest <jigsaw-reasoning-manifest> \
+  --contrastive-manifest <contrastive-reasoning-manifest> \
+  --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/four-task"
 ```
 
-The resulting CSV/JSON reports Rotation MathVista/MMMU percentages and
-reasoning-format coverage. The default response budget is
+The resulting CSV/JSON reports each supplied model's MathVista/MMMU percentages
+and reasoning-format coverage. Rotation-only aggregation remains backward
+compatible. The default response budget is
 4,096 tokens and uses deterministic sampling (`temperature=0.01`, `top-p=0.001`,
 `top-k=1`).

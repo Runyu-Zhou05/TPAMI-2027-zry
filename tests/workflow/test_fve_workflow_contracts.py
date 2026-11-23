@@ -138,6 +138,29 @@ class CommittedExportTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 run_six.model_fingerprint(model)
 
+    def test_ssl4rl_export_role_is_fingerprinted(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            model = Path(temporary)
+            config = model / "config.json"
+            config.write_text("{}")
+            shard = model / "model.safetensors"
+            shard.write_bytes(b"weights")
+            (model / "ssl4rl_export_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "artifact_type": "ssl4rl_export",
+                        "model_role": "jigsaw",
+                        "audit": {
+                            "safetensor_sha256": {shard.name: sha256(shard)},
+                            "support_file_sha256": {"config.json": sha256(config)},
+                        },
+                    }
+                )
+            )
+            record = full_runner.model_fingerprint(model)
+            self.assertEqual(record["artifact_type"], "ssl4rl_export")
+            self.assertEqual(record["model_role"], "jigsaw")
+
     def test_tracker_wins_over_newer_partial_checkpoint(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish Rotation-only MathVista/MMMU reasoning results."""
+"""Publish four-task SSL4RL MathVista/MMMU reasoning results."""
 
 from __future__ import annotations
 
@@ -14,6 +14,13 @@ from pathlib import Path
 
 
 BENCHMARKS = ("MathVista_MINI", "MMMU_DEV_VAL")
+MODEL_ROLES = ("position", "rotation", "jigsaw", "contrastive")
+DISPLAY_NAMES = {
+    "position": "Position",
+    "rotation": "Rotation",
+    "jigsaw": "Jigsaw",
+    "contrastive": "Contrastive",
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -75,32 +82,70 @@ def load_run(path: Path, role: str) -> tuple[Path, dict]:
     return path, manifest
 
 
+def evaluation_signature(manifest: dict) -> dict:
+    provenance = manifest["provenance"]
+    generation = {}
+    for benchmark, config in provenance["configs"].items():
+        model_records = list(config["model"].values())
+        if len(model_records) != 1:
+            raise SystemExit(f"Reasoning config must contain exactly one model: {benchmark}")
+        model_config = dict(model_records[0])
+        model_config.pop("model_path", None)
+        generation[benchmark] = {"model": model_config, "data": config["data"]}
+    return {
+        "data": provenance["data"],
+        "data_manifest_sha256": provenance["data_manifest_sha256"],
+        "evaluator": provenance["evaluator"],
+        "generation": generation,
+        "judge_api": provenance["judge_api"],
+        "judges": provenance["judges"],
+        "package_freeze": provenance["package_freeze"],
+        "reasoning_format": provenance["reasoning_format"],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--rotation-manifest", type=Path, required=True)
+    for role in MODEL_ROLES:
+        parser.add_argument(f"--{role}-manifest", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args()
 
-    rotation_path, rotation = load_run(args.rotation_manifest, "rotation")
+    selected_roles = tuple(role for role in MODEL_ROLES if getattr(args, f"{role}_manifest") is not None)
+    if set(selected_roles) not in ({"rotation"}, set(MODEL_ROLES)):
+        raise SystemExit("Provide either only --rotation-manifest or all four SSL4RL task manifests")
+    runs = {
+        role: load_run(getattr(args, f"{role}_manifest"), role)
+        for role in selected_roles
+    }
+    signatures = {role: evaluation_signature(manifest) for role, (_, manifest) in runs.items()}
+    reference = signatures[selected_roles[0]]
+    for role in selected_roles[1:]:
+        if signatures[role] != reference:
+            raise SystemExit(f"Reasoning evaluation protocol mismatch for {role}")
 
     rows = []
     summary = {}
     for name in BENCHMARKS:
-        rotation_score = float(rotation["scores_percent"][name])
-        row = {
-            "Benchmark": name,
-            "Rotation": f"{rotation_score:.2f}",
-        }
+        row = {"Benchmark": name}
+        benchmark_summary = {}
+        for role in selected_roles:
+            _, manifest = runs[role]
+            score = float(manifest["scores_percent"][name])
+            row[DISPLAY_NAMES[role]] = f"{score:.2f}"
+            benchmark_summary[role] = {
+                "score": score,
+                "reasoning_coverage": manifest["reasoning_coverage"][name],
+            }
         rows.append(row)
-        summary[name] = {
-            "rotation": rotation_score,
-            "rotation_reasoning_coverage": rotation["reasoning_coverage"][name],
-        }
+        summary[name] = benchmark_summary
     bundle = {
         "benchmarks": summary,
-        "rotation_manifest": {"path": str(rotation_path), "sha256": sha256_file(rotation_path)},
-        "run_id": rotation["run_id"],
-        "schema_version": 1,
+        "manifests": {
+            role: {"path": str(path), "sha256": sha256_file(path), "run_id": manifest["run_id"]}
+            for role, (path, manifest) in runs.items()
+        },
+        "schema_version": 2,
     }
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -108,7 +153,10 @@ def main() -> None:
         staging = Path(temporary)
         csv_path = staging / "reasoning_results.csv"
         with csv_path.open("w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["Benchmark", "Rotation"])
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["Benchmark", *[DISPLAY_NAMES[role] for role in selected_roles]],
+            )
             writer.writeheader()
             writer.writerows(rows)
         (staging / "reasoning_results.json").write_text(json.dumps(bundle, indent=2, sort_keys=True) + "\n")

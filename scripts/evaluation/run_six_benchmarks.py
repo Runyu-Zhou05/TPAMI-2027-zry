@@ -104,9 +104,20 @@ def model_fingerprint(model_path: Path) -> dict:
     }
     if "config.json" not in metadata_hashes:
         raise SystemExit(f"Model lacks config.json: {model_path}")
-    export_manifest = model_path / "fve_export_manifest.json"
-    if export_manifest.is_file():
+    export_manifests = [
+        ("fve_export", model_path / "fve_export_manifest.json"),
+        ("ssl4rl_export", model_path / "ssl4rl_export_manifest.json"),
+    ]
+    present_exports = [(kind, path) for kind, path in export_manifests if path.is_file()]
+    if len(present_exports) > 1:
+        raise SystemExit(f"Model directory mixes export identities: {[str(path) for _, path in present_exports]}")
+    if present_exports:
+        expected_artifact_type, export_manifest = present_exports[0]
         payload = json.loads(export_manifest.read_text())
+        artifact_type = payload.get("artifact_type", "fve_export")
+        model_role = payload.get("model_role", "rotation")
+        if artifact_type != expected_artifact_type:
+            raise SystemExit(f"Export manifest artifact type mismatch: {export_manifest}")
         audit = payload.get("audit", {})
         hashes = audit.get("safetensor_sha256")
         if not isinstance(hashes, dict) or not hashes:
@@ -121,12 +132,14 @@ def model_fingerprint(model_path: Path) -> dict:
         current_support = {
             str(path.relative_to(model_path)): sha256_file(path)
             for path in sorted(item for item in model_path.rglob("*") if item.is_file())
-            if path.suffix != ".safetensors" and path.name != "fve_export_manifest.json"
+            if path.suffix != ".safetensors"
+            and path.name not in {"fve_export_manifest.json", "ssl4rl_export_manifest.json"}
         }
         if current_support != support_hashes:
             raise SystemExit(f"Exported model config/processor/tokenizer files changed: {model_path}")
         return {
-            "artifact_type": "fve_export",
+            "artifact_type": artifact_type,
+            "model_role": model_role,
             "model_metadata_sha256": metadata_hashes,
             "export_manifest": str(export_manifest),
             "export_manifest_sha256": sha256_file(export_manifest),

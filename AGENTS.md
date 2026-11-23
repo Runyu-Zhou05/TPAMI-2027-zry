@@ -4,9 +4,12 @@
 
 This checkout contains the Rotation-only Frozen Vision Encoder (FVE) GRPO
 workflow built on SSL4RL and the bundled `verl 0.4.1.dev` source. Position,
-Jigsaw, and Contrastive are out of scope. The immediate deployment target is
-one Linux job with 8 NVIDIA H20 GPUs (compute capability `sm_90`) and a durable
-output root at:
+Jigsaw, and Contrastive remain out of scope for the FVE queue. A separate
+reviewer-analysis extension may train the four original unfrozen SSL4RL tasks
+and evaluate their exported checkpoints on MathVista/MMMU; it must not reuse
+the FVE queue or label normal checkpoints as FVE exports. The immediate
+deployment target is one Linux job with 8 NVIDIA H20 GPUs (compute capability
+`sm_90`) and a durable output root at:
 
 ```text
 /mnt/dolphinfs/ssd_pool/docker/user/hadoop-xt-ai-search/ai-search/jzzhang/runyv
@@ -375,13 +378,23 @@ before interpreting the Rotation-to-paper comparison.
 ### 11. Run MathVista and MMMU chain-of-thought evaluation
 
 Use `MathVista_MINI` and `MMMU_DEV_VAL`; do not silently substitute unlabeled
-test splits. Evaluate only the exported Rotation model: the pinned Base model
-is an input checkpoint, not another experiment to rerun. Use the explicit
+test splits. The legacy FVE path evaluates its exported Rotation model. The
+reviewer-analysis path evaluates all four normal paper-recipe tasks: Position,
+Rotation, Jigsaw, and Contrastive. Use the explicit
 `<think>...</think>` and `<answer>...</answer>` reasoning prompts, 4,096
 response tokens, and deterministic generation settings. Raw reasoning remains
 in prediction workbooks. MathVista uses the official DeepSeek `deepseek-chat`
-API as its auxiliary extraction judge, while MMMU uses exact matching. Never
-print, log, or commit the DeepSeek key; pass it with `--judge-api-key-file`.
+API as its auxiliary extraction judge, while MMMU uses exact matching. The
+trusted handoff stores the credential only as Base64 in
+`deepseek_api_key_b64.py`; the runner decodes it in memory and must never print
+or place the plaintext in logs or manifests.
+
+Before GPU evaluation, verify the bundled credential and both judge paths
+without loading a model:
+
+```bash
+python scripts/evaluation/smoke_reasoning_judges.py
+```
 
 ```bash
 python scripts/evaluation/prepare_reasoning_data.py \
@@ -390,17 +403,42 @@ python scripts/evaluation/prepare_reasoning_data.py \
 python scripts/evaluation/run_reasoning_benchmarks.py \
   --model-path <export.exported_model> --model-name Rotation --model-role rotation \
   --run-id <training-run-id> --gpu <one-gpu-index> \
-  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat \
-  --judge-api-key-file <deepseek-api-key.txt>
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat
 
 python scripts/evaluation/aggregate_reasoning_results.py \
   --rotation-manifest <rotation-reasoning-manifest> \
   --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/<training-run-id>"
 ```
 
-The authoritative Rotation path is the `export.exported_model` field in the
-fingerprinted post-training manifest. See `EVALUATION.md` for DeepSeek routing,
-credential handling, provenance, and output details.
+For each normal paper-recipe task, export the committed checkpoint with its
+true task identity, then run the same reasoning command with the matching role:
+
+```bash
+python scripts/evaluation/export_fve_checkpoint.py \
+  --checkpoint <task-checkpoint-root> --artifact-type ssl4rl_export \
+  --model-role <position|rotation|jigsaw|contrastive> \
+  --result-json <task-export-result.json>
+
+python scripts/evaluation/run_reasoning_benchmarks.py \
+  --model-path <exported_model> --model-name <display-name> \
+  --model-role <position|rotation|jigsaw|contrastive> \
+  --run-id <task-training-run-id> --gpu <one-gpu-index> \
+  --output-root "$FVE_OUTPUT_ROOT" --mathvista-judge deepseek-chat
+```
+
+After all four complete, aggregate only compatible attempts:
+
+```bash
+python scripts/evaluation/aggregate_reasoning_results.py \
+  --position-manifest <position-manifest> \
+  --rotation-manifest <rotation-manifest> \
+  --jigsaw-manifest <jigsaw-manifest> \
+  --contrastive-manifest <contrastive-manifest> \
+  --output-dir "$FVE_OUTPUT_ROOT/evaluation/reasoning_tables/four-task"
+```
+
+The legacy Rotation-only aggregation remains supported. See `EVALUATION.md`
+for DeepSeek routing, credential handling, provenance, and output details.
 
 ### 12. Preserve result artifacts
 

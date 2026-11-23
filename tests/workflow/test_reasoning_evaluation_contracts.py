@@ -9,10 +9,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
 EVAL = ROOT / "scripts" / "evaluation"
+if str(EVAL) not in sys.path:
+    sys.path.insert(0, str(EVAL))
 
 
 def sha256(path: Path) -> str:
@@ -51,6 +54,7 @@ def build_run(root: Path, role: str, judge: str = "gpt-4o-mini") -> Path:
         "data": {"same": True},
         "data_manifest_sha256": "data",
         "evaluator": {"same": True},
+        "judge_api": {"MathVista_MINI": "same"},
         "judges": {"MathVista_MINI": judge, "MMMU_DEV_VAL": "exact_matching"},
         "model": {"role": role},
         "model_role": role,
@@ -138,7 +142,24 @@ class ReasoningWorkflowTest(unittest.TestCase):
             self.assertIn("<think> and </think>", first)
             self.assertIn("<answer>final answer</answer>", first)
 
-    def test_rotation_run_summarizes_without_base_inference(self):
+    def test_four_task_runs_are_aggregated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifests = {role: build_run(root, role) for role in ("position", "rotation", "jigsaw", "contrastive")}
+            output = root / "results"
+            command = [sys.executable, str(EVAL / "aggregate_reasoning_results.py")]
+            for role, path in manifests.items():
+                command.extend([f"--{role}-manifest", str(path)])
+            command.extend(["--output-dir", str(output)])
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads((output / "reasoning_results.json").read_text())
+            self.assertEqual(payload["benchmarks"]["MMMU_DEV_VAL"]["rotation"]["score"], 60.0)
+            self.assertEqual(set(payload["manifests"]), {"position", "rotation", "jigsaw", "contrastive"})
+            header = (output / "reasoning_results.csv").read_text().splitlines()[0]
+            self.assertEqual(header, "Benchmark,Position,Rotation,Jigsaw,Contrastive")
+
+    def test_legacy_rotation_only_aggregation_remains_supported(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             rotation = build_run(root, "rotation")
@@ -156,28 +177,37 @@ class ReasoningWorkflowTest(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            payload = json.loads((output / "reasoning_results.json").read_text())
-            self.assertEqual(payload["benchmarks"]["MMMU_DEV_VAL"]["rotation"], 60.0)
-            self.assertNotIn("base_manifest", payload)
+            self.assertEqual(
+                (output / "reasoning_results.csv").read_text().splitlines()[0],
+                "Benchmark,Rotation",
+            )
 
-    def test_base_manifest_is_rejected_as_rotation_result(self):
+    def test_task_manifest_cannot_be_mislabeled(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            base = build_run(root, "base", judge="deepseek-chat")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(EVAL / "aggregate_reasoning_results.py"),
-                    "--rotation-manifest",
-                    str(base),
-                    "--output-dir",
-                    str(root / "results"),
-                ],
-                capture_output=True,
-                text=True,
-            )
+            manifests = {role: build_run(root, role) for role in ("position", "rotation", "jigsaw", "contrastive")}
+            command = [sys.executable, str(EVAL / "aggregate_reasoning_results.py")]
+            command.extend(["--position-manifest", str(manifests["position"])])
+            command.extend(["--rotation-manifest", str(manifests["position"])])
+            command.extend(["--jigsaw-manifest", str(manifests["jigsaw"])])
+            command.extend(["--contrastive-manifest", str(manifests["contrastive"])])
+            command.extend(["--output-dir", str(root / "results")])
+            result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Invalid rotation reasoning manifest identity", result.stderr)
+
+    def test_bundled_credential_decodes_without_output(self):
+        from deepseek_credential import resolve_deepseek_api_key
+
+        with mock.patch.dict("os.environ", {"DEEPSEEK_API_KEY": ""}):
+            key, source = resolve_deepseek_api_key()
+        self.assertTrue(key.startswith("sk-"))
+        self.assertEqual(source, "bundled_base64")
+
+    def test_mmmu_judge_smoke_is_exact_matching(self):
+        from smoke_reasoning_judges import mmmu_exact_match
+
+        self.assertEqual(mmmu_exact_match(), "B")
 
     def test_protocol_constants_are_pinned(self):
         source = (EVAL / "prepare_reasoning_data.py").read_text()
@@ -187,7 +217,9 @@ class ReasoningWorkflowTest(unittest.TestCase):
         self.assertIn('parser.add_argument("--max-new-tokens", type=int, default=4096)', runner)
         self.assertIn('"MMMU_DEV_VAL": "exact_matching"', runner)
         self.assertIn('default="deepseek-chat"', runner)
-        self.assertIn('choices=("rotation",)', runner)
+        self.assertIn('MODEL_ROLES = ("position", "rotation", "jigsaw", "contrastive")', runner)
+        self.assertIn('artifact_type == "ssl4rl_export"', runner)
+        self.assertIn("resolve_deepseek_api_key", runner)
         self.assertIn("https://api.deepseek.com/chat/completions", runner)
         full_runner = (EVAL / "run_six_benchmarks.py").read_text()
         self.assertIn('("paper-readme", "base", "mmbench")', full_runner)

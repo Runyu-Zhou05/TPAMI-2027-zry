@@ -11,6 +11,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from deepseek_credential import resolve_deepseek_api_key
 from prepare_reasoning_data import DATASETS, digest
 from run_six_benchmarks import (
     VLMEVAL_COMMIT,
@@ -28,6 +29,7 @@ BENCHMARKS = {
     "MMMU_DEV_VAL": {"class": "MMMUDataset", "dataset": "MMMU_DEV_VAL"},
 }
 JUDGES = ("deepseek-chat", "gpt-4-0125", "gpt-4o", "gpt-4o-0806", "gpt-4o-mini")
+MODEL_ROLES = ("position", "rotation", "jigsaw", "contrastive")
 
 
 def data_fingerprint(lmu_root: Path, manifest: dict) -> dict:
@@ -139,7 +141,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--model-name", required=True)
-    parser.add_argument("--model-role", choices=("rotation",), required=True)
+    parser.add_argument("--model-role", choices=MODEL_ROLES, required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--gpu", required=True)
     parser.add_argument("--output-root", type=Path, required=True)
@@ -201,8 +203,18 @@ def main() -> None:
         },
     }
     model_provenance = model_fingerprint(model_path)
-    if model_provenance.get("artifact_type") != "fve_export":
-        raise SystemExit("Rotation reasoning evaluation requires an exported FVE checkpoint manifest")
+    artifact_type = model_provenance.get("artifact_type")
+    exported_role = model_provenance.get("model_role")
+    if artifact_type == "fve_export":
+        if args.model_role != "rotation" or exported_role != "rotation":
+            raise SystemExit("FVE reasoning evaluation requires the Rotation role")
+    elif artifact_type == "ssl4rl_export":
+        if exported_role != args.model_role:
+            raise SystemExit(
+                f"SSL4RL export role {exported_role!r} does not match --model-role {args.model_role!r}"
+            )
+    else:
+        raise SystemExit("Reasoning evaluation requires a validated FVE or SSL4RL export manifest")
     packages = subprocess.run(
         [str(eval_python), "-m", "pip", "freeze"], capture_output=True, text=True, check=True
     ).stdout.splitlines()
@@ -254,16 +266,9 @@ def main() -> None:
         print(json.dumps({"attempt": str(work_dir), "commands": commands, "fingerprint": fingerprint}, indent=2))
         return
     judge_key = None
+    judge_credential_source = None
     if args.mathvista_judge == "deepseek-chat":
-        if args.judge_api_key_file is not None:
-            key_file = args.judge_api_key_file.expanduser().resolve()
-            if not key_file.is_file():
-                raise SystemExit(f"DeepSeek API-key file is missing: {key_file}")
-            judge_key = key_file.read_text().strip()
-        else:
-            judge_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-        if not judge_key.startswith("sk-"):
-            raise SystemExit("DeepSeek judge requires --judge-api-key-file or DEEPSEEK_API_KEY")
+        judge_key, judge_credential_source = resolve_deepseek_api_key(args.judge_api_key_file)
     expected_preflight = {"fingerprint": fingerprint, "provenance": provenance}
     if work_dir.exists() and any(work_dir.iterdir()):
         if not args.resume or not preflight_path.is_file():
@@ -314,6 +319,7 @@ def main() -> None:
         "model_name": args.model_name,
         "model_path": str(model_path),
         "model_role": args.model_role,
+        "judge_credential_source": judge_credential_source,
         "package_freeze": packages,
         "prediction_artifacts": predictions,
         "provenance": provenance,

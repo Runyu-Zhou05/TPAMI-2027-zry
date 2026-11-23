@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve an FVE actor checkpoint and expose it as a validated HF model."""
+"""Resolve an SSL4RL actor checkpoint and expose it as a validated HF model."""
 
 from __future__ import annotations
 
@@ -18,6 +18,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_VISUAL_PARAMS = 668_684_288
 EXPECTED_TOTAL_PARAMS = 3_754_622_976
+MODEL_ROLES = ("position", "rotation", "jigsaw", "contrastive")
+EXPORT_MANIFESTS = {
+    "fve_export": "fve_export_manifest.json",
+    "ssl4rl_export": "ssl4rl_export_manifest.json",
+}
 
 
 def global_step(path: Path) -> int:
@@ -137,7 +142,7 @@ def audit_hf_model(model_dir: Path) -> dict:
     support_files = {
         str(path.relative_to(model_dir)): sha256_file(path)
         for path in sorted(item for item in model_dir.rglob("*") if item.is_file())
-        if path.suffix != ".safetensors" and path.name != "fve_export_manifest.json"
+        if path.suffix != ".safetensors" and path.name not in set(EXPORT_MANIFESTS.values())
     }
     return {
         "architectures": getattr(config, "architectures", None),
@@ -180,8 +185,13 @@ def main() -> None:
     parser.add_argument("--target-dir", type=Path, default=None)
     parser.add_argument("--python", dest="python_executable", default=os.environ.get("FVE_PYTHON", sys.executable))
     parser.add_argument("--result-json", type=Path, default=None)
+    parser.add_argument("--artifact-type", choices=tuple(EXPORT_MANIFESTS), default="fve_export")
+    parser.add_argument("--model-role", choices=MODEL_ROLES, default="rotation")
     parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
+    if args.artifact_type == "fve_export" and args.model_role != "rotation":
+        raise SystemExit("FVE exports are Rotation-only; use --artifact-type ssl4rl_export for paper-recipe tasks")
+    export_manifest_name = EXPORT_MANIFESTS[args.artifact_type]
 
     actor_dir = resolve_actor_dir(args.checkpoint)
     step_dir = actor_dir.parent
@@ -200,13 +210,15 @@ def main() -> None:
         model_dir = (args.target_dir or default_target(actor_dir)).expanduser().resolve()
         export_mode = "merged_fsdp_shards"
         if model_dir.exists():
-            existing_manifest_path = model_dir / "fve_export_manifest.json"
+            existing_manifest_path = model_dir / export_manifest_name
             if not existing_manifest_path.is_file():
                 raise SystemExit(f"Refusing to reuse unbound export directory: {model_dir}")
             existing_manifest = json.loads(existing_manifest_path.read_text())
             if (
                 existing_manifest.get("actor_checkpoint") != str(actor_dir)
                 or existing_manifest.get("source_checkpoint_manifest_sha256") != completion_manifest_sha256
+                or existing_manifest.get("artifact_type", "fve_export") != args.artifact_type
+                or existing_manifest.get("model_role", "rotation") != args.model_role
             ):
                 raise SystemExit(f"Existing export is bound to a different checkpoint: {model_dir}")
         else:
@@ -235,15 +247,18 @@ def main() -> None:
     audit = audit_hf_model(model_dir)
     manifest = {
         "actor_checkpoint": str(actor_dir),
+        "artifact_type": args.artifact_type,
         "audit": audit,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "export_mode": export_mode,
         "exported_model": str(model_dir),
         "generator_git_commit": git_commit(),
         "global_step": step,
+        "model_role": args.model_role,
+        "schema_version": 1,
         "source_checkpoint_manifest_sha256": completion_manifest_sha256,
     }
-    manifest_path = model_dir / "fve_export_manifest.json"
+    manifest_path = model_dir / export_manifest_name
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     write_result(args.result_json, manifest)
     print(json.dumps(manifest, indent=2, sort_keys=True))
