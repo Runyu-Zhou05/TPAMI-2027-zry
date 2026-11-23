@@ -102,6 +102,10 @@ def default_compute_score(
         from . import search_r1_like_qa_em
         res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
 
+    elif "MMBench_GoldenQA" in data_source:
+        from . import golden_vqa
+        res = golden_vqa.compute_score(solution_str, ground_truth)
+
     elif "imagenet_qa" in data_source:
         from . import ssl4rl
         res = ssl4rl.compute_score(solution_str, ground_truth)

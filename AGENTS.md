@@ -462,6 +462,16 @@ The canonical dataset identity is the 100-class ImageFolder tree documented in
 used only for the bounded Base smoke because `/data1` and `/data2` are nearly
 full; store full feature caches under the target H20 job's durable output root.
 
+### 14. Run Position-to-Golden RLVR
+
+Follow `GOLDEN_RLVR.md`. Use the checksum-pinned old `MMBench_DEV_EN`, its
+deterministic seed-42 complete-group 60/40 split, and the final normal Position
+HF export. Golden training is a fresh unfrozen run, never a checkpoint resume:
+20 epochs, an explicit 100-step ceiling, validation before training, and
+validation/checkpoints every 20 steps. Preserve all checkpoints, reward traces,
+and validation JSONL files. The launcher fails closed unless terminal step 100
+and validation steps 0/20/40/60/80/100 are present.
+
 ## Editing and validation rules
 
 - Keep generated models, datasets, caches, logs, traces, and checkpoints out of
