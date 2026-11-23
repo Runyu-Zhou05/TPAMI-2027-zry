@@ -448,6 +448,20 @@ attempt directories. Do not substitute the BasePaper MMBench-only manifest for
 a legacy six-benchmark Base manifest: the paper-reproduction attempts are a
 separate comparison and must remain immutable.
 
+### 13. Run the reviewer visual-feature probe
+
+Use the fixed ImageNet-100 protocol in `PROBING.md` for Base plus the normal
+unfrozen Rotation and Position checkpoints. Extract both final-ViT/pre-merger
+and post-merger/pre-LLM features at a fixed 224 crop, mean pool all spatial
+tokens, and train only the linear heads. Normal task checkpoints must carry a
+matching `ssl4rl_export_manifest.json`; never relabel an FVE export.
+
+The canonical dataset identity is the 100-class ImageFolder tree documented in
+`PROBING.md` (130,000 train and 5,000 validation images), not
+`PKU-ML/ImageNet-Subset`. Run `smoke` before full extraction. Server 247 may be
+used only for the bounded Base smoke because `/data1` and `/data2` are nearly
+full; store full feature caches under the target H20 job's durable output root.
+
 ## Editing and validation rules
 
 - Keep generated models, datasets, caches, logs, traces, and checkpoints out of
