@@ -384,10 +384,37 @@ Rotation, Jigsaw, and Contrastive. Use the explicit
 `<think>...</think>` and `<answer>...</answer>` reasoning prompts, 4,096
 response tokens, and deterministic generation settings. Raw reasoning remains
 in prediction workbooks. MathVista uses the official DeepSeek `deepseek-chat`
-API as its auxiliary extraction judge, while MMMU uses exact matching. The
+API as its auxiliary extraction judge. For MMMU, the runner's built-in exact
+matching and strict `<answer>` extraction are diagnostics only: exact matching
+cannot reliably parse long tagged CoT, while tag-only scoring confounds answer
+accuracy with format compliance. The reportable MMMU score must come from a
+separate, model-blind `deepseek-chat` answer-extraction pass over the complete
+saved predictions. The
 trusted handoff stores the credential only as Base64 in
 `deepseek_api_key_b64.py`; the runner decodes it in memory and must never print
 or place the plaintext in logs or manifests.
+
+MMMU DeepSeek rescoring never reruns GPU inference. For every one of the 1,050
+`MMMU_DEV_VAL` rows (900 validation and 150 development), send exactly the
+question, options, and candidate response to the same fixed extraction prompt;
+never send the ground-truth answer or model identity. Use the official DeepSeek
+endpoint, `deepseek-chat`, temperature 0, and require one `A`--`D` letter or an
+explicit invalid result. Retry transient API failures, but never drop a row or
+count an unresolved request silently; publication requires 1,050 completed
+records, zero API errors, and zero NaNs. Apply the extracted letters to ground
+truth only after the judge response has been saved.
+
+Publish an immutable per-model rescore directory containing the extraction
+prompt and SHA256, source prediction workbook SHA256, one auditable row per
+dataset index (split, prediction hash, extracted letter/status, correctness),
+validation/development/overall scores, parsing coverage, API-error inventory,
+and a manifest recording endpoint/model/decoding settings without the key.
+Base and trained models must use byte-identical judge settings. Preserve the
+legacy exact/tag scores as diagnostics, and use paired per-index outcomes for
+McNemar or paired-bootstrap comparisons. Do not let
+`aggregate_reasoning_results.py` present legacy MMMU exact matching as the
+primary result; until it consumes the DeepSeek-rescore manifest, publish the
+rescored MMMU table separately.
 
 Before GPU evaluation, verify the bundled credential and both judge paths
 without loading a model:
