@@ -1,3 +1,4 @@
+import argparse
 import os
 import tqdm
 import torch
@@ -11,7 +12,26 @@ from image_utils import decode_image
 
 COLUMN_NAMES = ['filename', 'height', 'width', 'label', 'query', 'answer', 'images']
 
-def augment(img) -> Image.Image:
+AUGMENTATION_CONFIGS = {
+    'weak': 'augcfg.yaml',
+    'strong': 'augcfg_strong.yaml',
+}
+
+TARGET_PATHS = {
+    'weak': 'datasets/MMBench-ContrastiveQA',
+    'strong': 'datasets/MMBench-ContrastiveQA_strong',
+}
+
+
+def get_augmentation_config_path(augmentation: str) -> str:
+    return os.path.join(os.path.dirname(__file__), AUGMENTATION_CONFIGS[augmentation])
+
+
+def get_target_path(augmentation: str) -> str:
+    return TARGET_PATHS[augmentation]
+
+
+def augment(img, augmentation: str = 'weak') -> Image.Image:
     # borrowed from solo-learn
     import omegaconf
 
@@ -215,7 +235,7 @@ def augment(img) -> Image.Image:
         augmentations = transforms.Compose(augmentations)
         return augmentations
 
-    config_path = os.path.join(os.path.dirname(__file__), 'augcfg.yaml')
+    config_path = get_augmentation_config_path(augmentation)
     cfg, = omegaconf.OmegaConf.load(config_path)
     trans = build_transform_pipeline('imagenet', cfg)
     try:
@@ -225,10 +245,10 @@ def augment(img) -> Image.Image:
 
     return result
 
-def repetive_augment(img: Image.Image, num: int = 5, thresh: int = 28):
+def repetive_augment(img: Image.Image, num: int = 5, thresh: int = 28, augmentation: str = 'weak'):
     im = None
     while im is None or (im.width < thresh or im.height < thresh):
-        im = augment(img)
+        im = augment(img, augmentation=augmentation)
         num -= 1
         if num <= 0:
             break
@@ -247,7 +267,7 @@ Your answer should strictly follow this format:
 
 
 
-def process_split(base: datasets.Dataset):
+def process_split(base: datasets.Dataset, augmentation: str = 'weak'):
     dlen = len(base)
 
     # 使用生成器和批处理来减少内存占用
@@ -256,8 +276,8 @@ def process_split(base: datasets.Dataset):
         for dtmid, datum in enumerate(tqdm.tqdm(base, desc='Positive Pairs')):
             img = decode_image(datum['image'])
             try:
-                im1 = augment(img)
-                im2 = augment(img)
+                im1 = augment(img, augmentation=augmentation)
+                im2 = augment(img, augmentation=augmentation)
 
                 if im1 is None or im2 is None:
                     continue
@@ -302,8 +322,8 @@ def process_split(base: datasets.Dataset):
                 img1 = decode_image(datum1['image'])
                 img2 = decode_image(datum2['image'])
 
-                im1 = augment(img1)
-                im2 = augment(img2)
+                im1 = augment(img1, augmentation=augmentation)
+                im2 = augment(img2, augmentation=augmentation)
 
                 if im1 is None or im2 is None:
                     continue
@@ -377,17 +397,21 @@ def save_dataset_streaming(data_generator, output_path, batch_size=10000):
     return total_batches
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--augmentation', choices=AUGMENTATION_CONFIGS, default='weak')
+    args = parser.parse_args()
+
     seed = 0
     random.seed(seed)
     torch.manual_seed(seed)
 
     source_path = "datasets/MMBench/en"
-    target_path = "datasets/MMBench-ContrastiveQA"
+    target_path = get_target_path(args.augmentation)
 
     os.makedirs(target_path, exist_ok=True)
     for split in ['test', 'validation']:
         base = datasets.load_dataset(source_path, split=split)
-        data_generator = process_split(base)
+        data_generator = process_split(base, augmentation=args.augmentation)
 
         # 使用流式保存避免内存溢出，不合并文件
         batch_count = save_dataset_streaming(data_generator, f'{target_path}/{split}', batch_size=10000)

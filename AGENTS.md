@@ -479,6 +479,16 @@ split by its nine categories into 8,539 train and 5,693 held-out rows. The
 fixed budget is 20 epochs / 320 steps with validation before training and every
 20 steps; the launcher requires committed step 320 plus all validation dumps.
 
+### 15. Run the four Table-XI harder variants
+
+Follow `DIFFICULTY_VARIANTS.md` for Rotation45, Jigsaw3x3,
+Contrastive-strong, and Position3x3. Generate each hard dataset into its own
+directory, convert it with `prepare_hard_variant_data.py`, and pass the
+one-step real smoke before full training. These are normal unfrozen 3B runs,
+not FVE runs. Preserve the original paper launcher semantics, including the
+train+test optimization inputs, while recording per-rollout reward traces.
+Jigsaw3x3 must explicitly allow nine images per prompt.
+
 ## Editing and validation rules
 
 - Keep generated models, datasets, caches, logs, traces, and checkpoints out of

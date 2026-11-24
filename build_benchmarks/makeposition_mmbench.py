@@ -1,14 +1,13 @@
+from __future__ import annotations
+
+import argparse
 import os
-import tqdm
-import torch
 import random
-import datasets
 import numpy as np
 import logging
 import sys
 
 from PIL import Image
-from torchvision import transforms
 
 from image_utils import decode_image
 
@@ -41,6 +40,78 @@ Your answer should strictly follow this format:
 
 <think>your step-by-step reasoning here</think> <answer>top-left/top-right/bottom-left/bottom-right</answer>'''
 
+GRID_LABELS = {
+    2: (
+        'top-left',
+        'top-right',
+        'bottom-left',
+        'bottom-right',
+    ),
+    3: (
+        'top-left',
+        'top-center',
+        'top-right',
+        'middle-left',
+        'middle-center',
+        'middle-right',
+        'bottom-left',
+        'bottom-center',
+        'bottom-right',
+    ),
+}
+
+
+def get_grid_labels(grid_size: int) -> tuple[str, ...]:
+    """Return row-major position labels for a supported grid size."""
+    try:
+        return GRID_LABELS[grid_size]
+    except KeyError as exc:
+        raise ValueError(f'Unsupported grid size: {grid_size}') from exc
+
+
+def get_grid_bounds(height: int, width: int, grid_size: int) -> dict[str, tuple[int, int, int, int]]:
+    """Return ``(top, bottom, left, right)`` bounds for every grid cell."""
+    labels = get_grid_labels(grid_size)
+    if height <= 0 or width <= 0:
+        raise ValueError('Image height and width must be positive')
+
+    row_edges = [row * height // grid_size for row in range(grid_size + 1)]
+    column_edges = [column * width // grid_size for column in range(grid_size + 1)]
+    bounds = {}
+    for index, label in enumerate(labels):
+        row, column = divmod(index, grid_size)
+        bounds[label] = (
+            row_edges[row],
+            row_edges[row + 1],
+            column_edges[column],
+            column_edges[column + 1],
+        )
+    return bounds
+
+
+def get_query_template(grid_size: int) -> str:
+    """Return the prompt for the requested position-classification grid."""
+    if grid_size == 2:
+        return QUERY_TEMPLATE
+
+    labels = get_grid_labels(grid_size)
+    label_list = ', '.join(labels[:-1]) + f' and {labels[-1]}'
+    answer_options = '/'.join(labels)
+    return f'''<image><image>
+
+The second image in an augmented version of a crop in the first image. The augmentations may include grayscale, color jitter, solarization, etc. Please determine which part of the first image the second image is from. The answer is strictly limited to nine cases: {label_list}.
+
+Your answer should strictly follow this format:
+
+<think>your step-by-step reasoning here</think> <answer>{answer_options}</answer>'''
+
+
+def get_output_directory(grid_size: int) -> str:
+    """Return a grid-specific output directory without changing the 2x2 path."""
+    get_grid_labels(grid_size)
+    grid_suffix = '' if grid_size == 2 else f'_{grid_size}x{grid_size}'
+    return f'datasets/MMBench-PositionQA{grid_suffix}{aug_suffix}'
+
 
 
 def augment(img) -> Image.Image:
@@ -49,6 +120,7 @@ def augment(img) -> Image.Image:
 
     # borrowed from solo-learn
     import omegaconf
+    from torchvision import transforms
 
     from typing import Callable, List, Optional, Sequence, Type, Union
     from PIL import Image, ImageFilter, ImageOps
@@ -261,7 +333,17 @@ def augment(img) -> Image.Image:
     return result
 
 
-def process_batch(base: datasets.Dataset, start: int, end: int, prefix: str, processor_id: int, min_size: int = 28):
+def process_batch(
+    base,
+    start: int,
+    end: int,
+    prefix: str,
+    processor_id: int,
+    min_size: int = 28,
+    grid_size: int = 2,
+):
+    import datasets
+
     results = []
     logger.info(f"Processor {processor_id}: Starting batch from {start} to {end}")
 
@@ -269,22 +351,17 @@ def process_batch(base: datasets.Dataset, start: int, end: int, prefix: str, pro
         datum = base[j]
         img: Image.Image = decode_image(datum['image'])
 
-        if img.width < min_size * 2 or img.height < min_size * 2:
+        if img.width < min_size * grid_size or img.height < min_size * grid_size:
             continue
 
         imarr = np.asarray(img)
         h, w = img.height, img.width
 
-        take_part_func = {
-            'top-left': lambda x: x[:h//2, :w//2],
-            'top-right': lambda x: x[:h//2, w//2:],
-            'bottom-left': lambda x: x[h//2:, :w//2],
-            'bottom-right': lambda x: x[h//2:, w//2:],
-        }
-
-        orientations = list(take_part_func.keys())
+        grid_bounds = get_grid_bounds(h, w, grid_size)
+        orientations = list(get_grid_labels(grid_size))
         ori = random.choice(orientations)
-        part = take_part_func[ori](imarr) # quarter-image
+        top_bound, bottom_bound, left_bound, right_bound = grid_bounds[ori]
+        part = imarr[top_bound:bottom_bound, left_bound:right_bound]
         ph, pw = part.shape[:2]
 
         minhcropsize = max(min_size, int(ph * CROP_MIN_PERCENT))
@@ -317,7 +394,7 @@ def process_batch(base: datasets.Dataset, start: int, end: int, prefix: str, pro
             'height2': aug.height,
             'width2': aug.width,
             'images': [img, aug],
-            'query': QUERY_TEMPLATE,
+            'query': get_query_template(grid_size),
             'answer': ori
         }
         
@@ -326,7 +403,7 @@ def process_batch(base: datasets.Dataset, start: int, end: int, prefix: str, pro
     logger.info(f"Processor {processor_id}: Completed processing {len(results)} items")
 
     # Create save directory with fallback
-    save_dir = f'datasets/MMBench-PositionQA{aug_suffix}'
+    save_dir = get_output_directory(grid_size)
     os.makedirs(save_dir, exist_ok=True)
 
     parquet_name = f'{prefix}-{processor_id:05d}.parquet'
@@ -343,7 +420,7 @@ def process_batch(base: datasets.Dataset, start: int, end: int, prefix: str, pro
         
 
 
-def process_split(base: datasets.Dataset, prefix: str, num_processors: int = None):
+def process_split(base, prefix: str, num_processors: int = None, grid_size: int = 2):
     if num_processors is None:
         num_processors = min(MAX_BATCHES, os.cpu_count() or 4)
     
@@ -368,7 +445,7 @@ def process_split(base: datasets.Dataset, prefix: str, num_processors: int = Non
     
     for i, (base, start, end, split_name, processor_id) in enumerate(jobs):
         logger.info(f"Processing batch {i+1}/{len(jobs)}: items {start} to {end}")
-        result = process_batch(base, start, end, split_name, processor_id)
+        result = process_batch(base, start, end, split_name, processor_id, grid_size=grid_size)
         results.append(result)
         logger.info(f"Batch {i+1} completed: {result}")
 
@@ -376,14 +453,34 @@ def process_split(base: datasets.Dataset, prefix: str, num_processors: int = Non
     return results
 
 
-if __name__ == '__main__':
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description='Build the MMBench PositionQA dataset.')
+    parser.add_argument(
+        '--grid-size',
+        type=int,
+        choices=sorted(GRID_LABELS),
+        default=2,
+        help='Position grid size. Defaults to the original 2x2 task.',
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    import datasets
+    import torch
+
     logger.info("Starting build_crop.py script")
     
     if DO_AUGMENT:
         logger.info(f'{DO_AUGMENT=}: Using augmentation.')
     else:
         logger.info(f'{DO_AUGMENT=}: Not using augmentation.')
-    logger.info(f'The cropped piece takes {CROP_MIN_PERCENT} to {CROP_MAX_PERCENT} of the quarter image size.')
+    logger.info(
+        f'The cropped piece takes {CROP_MIN_PERCENT} to {CROP_MAX_PERCENT} '
+        f'of the {args.grid_size}x{args.grid_size} grid-cell size.'
+    )
     logger.info(f'Using batch processing with max {MAX_BATCHES} batches')
 
     seed = 0
@@ -406,6 +503,10 @@ if __name__ == '__main__':
         base = datasets.load_dataset(dataset_path, split=split)
         logger.info(f"Successfully loaded {split} split with {len(base)} items")
         
-        process_split(base, split, num_processors=1)
+        process_split(base, split, num_processors=1, grid_size=args.grid_size)
         logger.info(f"Completed processing {split} split")
+
+
+if __name__ == '__main__':
+    main()
                 
