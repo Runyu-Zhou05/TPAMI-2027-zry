@@ -2,9 +2,10 @@
 
 ## Objective
 
-Compare frozen visual representations from the pinned Base model and the normal
-unfrozen Rotation and Position paper-recipe checkpoints. The probe measures two
-feature locations without running the language model:
+Compare frozen visual representations from the pinned Base model and all four
+normal unfrozen paper-recipe checkpoints: Rotation, Position, Jigsaw, and
+Contrastive. The probe measures two feature locations without running the
+language model:
 
 - `pre_merger`: final ViT patch features immediately before `visual.merger`;
 - `post_merger`: projected visual tokens immediately before they enter the LLM.
@@ -29,7 +30,7 @@ The extraction command refuses any other class or row inventory.
 
 ## Protocol
 
-- models: Base, normal Rotation, normal Position;
+- models: Base, normal Rotation, Position, Jigsaw, and Contrastive;
 - image transform: bicubic short-side resize to 256, center crop to 224;
 - frozen model, no language-model forward pass;
 - feature dimensions for Qwen2.5-VL-3B: 1,280 pre-merger, 2,048 post-merger;
@@ -56,12 +57,13 @@ The smoke is a wiring check only; its accuracy is not reportable.
 
 ## Full extraction and fitting
 
-Run these commands separately for Base, Rotation, and Position. Normal trained
-models must have a matching `ssl4rl_export_manifest.json`.
+Run these commands separately for Base, Rotation, Position, Jigsaw, and
+Contrastive. Every normal trained model must have a matching
+`ssl4rl_export_manifest.json` whose `model_role` matches the CLI role.
 
 ```bash
 python scripts/probing/imagenet100_linear_probe.py extract \
-  --model-path <model> --model-role <base|rotation|position> \
+  --model-path <model> --model-role <base|rotation|position|jigsaw|contrastive> \
   --data-root <imagenet100> --output-dir <feature-cache> \
   --device cuda:0 --batch-size 32 --workers 8 \
   --attn-implementation flash_attention_2
@@ -83,6 +85,8 @@ python scripts/probing/aggregate_imagenet100_probes.py \
   --base-result <base-linear_probe_results.json> \
   --rotation-result <rotation-linear_probe_results.json> \
   --position-result <position-linear_probe_results.json> \
+  --jigsaw-result <jigsaw-linear_probe_results.json> \
+  --contrastive-result <contrastive-linear_probe_results.json> \
   --output-dir <summary-dir>
 ```
 

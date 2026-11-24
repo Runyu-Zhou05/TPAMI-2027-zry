@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate compatible Base/Rotation/Position ImageNet-100 linear probes."""
+"""Aggregate compatible Base and four-task ImageNet-100 linear probes."""
 
 from __future__ import annotations
 
@@ -12,8 +12,14 @@ import tempfile
 from pathlib import Path
 
 
-ROLES = ("base", "rotation", "position")
-DISPLAY = {"base": "Base", "rotation": "Rotation", "position": "Position"}
+ROLES = ("base", "rotation", "position", "jigsaw", "contrastive")
+DISPLAY = {
+    "base": "Base",
+    "rotation": "Rotation",
+    "position": "Position",
+    "jigsaw": "Jigsaw",
+    "contrastive": "Contrastive",
+}
 LEVELS = ("pre_merger", "post_merger")
 
 
@@ -93,20 +99,17 @@ def main() -> None:
     summary = {}
     for level in LEVELS:
         scores = {role: float(loaded[role][1]["results"][level]["mean_top1"]) * 100.0 for role in ROLES}
-        rows.append(
+        row = {"Feature": level, **{DISPLAY[role]: f"{scores[role]:.2f}" for role in ROLES}}
+        row.update(
             {
-                "Feature": level,
-                "Base": f"{scores['base']:.2f}",
-                "Rotation": f"{scores['rotation']:.2f}",
-                "Position": f"{scores['position']:.2f}",
-                "Rotation-Base": f"{scores['rotation'] - scores['base']:+.2f}",
-                "Position-Base": f"{scores['position'] - scores['base']:+.2f}",
+                f"{DISPLAY[role]}-Base": f"{scores[role] - scores['base']:+.2f}"
+                for role in ROLES[1:]
             }
         )
+        rows.append(row)
         summary[level] = {
             **scores,
-            "rotation_minus_base": scores["rotation"] - scores["base"],
-            "position_minus_base": scores["position"] - scores["base"],
+            **{f"{role}_minus_base": scores[role] - scores["base"] for role in ROLES[1:]},
         }
     bundle = {
         "inputs": {

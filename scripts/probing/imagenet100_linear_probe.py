@@ -21,7 +21,7 @@ import numpy as np
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_ROLES = ("base", "rotation", "position")
+MODEL_ROLES = ("base", "rotation", "position", "jigsaw", "contrastive")
 FEATURE_LEVELS = ("pre_merger", "post_merger")
 EXPECTED_SPLITS = {"train": (100, 130_000, 1_300), "val": (100, 5_000, 50)}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}

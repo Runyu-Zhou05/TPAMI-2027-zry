@@ -61,6 +61,11 @@ class ImageNetProbeContractTest(unittest.TestCase):
             self.assertEqual(probe.model_identity(model, "position")["model_role"], "position")
             with self.assertRaises(SystemExit):
                 probe.model_identity(model, "rotation")
+            for role in ("rotation", "jigsaw", "contrastive"):
+                (model / "ssl4rl_export_manifest.json").write_text(
+                    json.dumps({"artifact_type": "ssl4rl_export", "model_role": role})
+                )
+                self.assertEqual(probe.model_identity(model, role)["model_role"], role)
 
     def test_protocol_signature_ignores_model_identity_but_not_probe_settings(self):
         cache = {
@@ -94,11 +99,11 @@ class ImageNetProbeContractTest(unittest.TestCase):
         self.assertIn("model.requires_grad_(False)", source)
         self.assertIn('FEATURE_LEVELS = ("pre_merger", "post_merger")', source)
 
-    def test_three_compatible_full_results_are_aggregated(self):
+    def test_base_and_four_compatible_full_results_are_aggregated(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             result_paths = {}
-            for offset, role in enumerate(("base", "rotation", "position")):
+            for offset, role in enumerate(("base", "rotation", "position", "jigsaw", "contrastive")):
                 role_root = root / role
                 role_root.mkdir()
                 cache = {
@@ -148,8 +153,12 @@ class ImageNetProbeContractTest(unittest.TestCase):
             completed = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(completed.returncode, 0, completed.stderr)
             rows = (output / "imagenet100_probe_results.csv").read_text().splitlines()
-            self.assertEqual(rows[0], "Feature,Base,Rotation,Position,Rotation-Base,Position-Base")
-            self.assertIn("+1.00,+2.00", rows[1])
+            self.assertEqual(
+                rows[0],
+                "Feature,Base,Rotation,Position,Jigsaw,Contrastive,"
+                "Rotation-Base,Position-Base,Jigsaw-Base,Contrastive-Base",
+            )
+            self.assertIn("+1.00,+2.00,+3.00,+4.00", rows[1])
 
 
 if __name__ == "__main__":

@@ -477,11 +477,12 @@ separate comparison and must remain immutable.
 
 ### 13. Run the reviewer visual-feature probe
 
-Use the fixed ImageNet-100 protocol in `PROBING.md` for Base plus the normal
-unfrozen Rotation and Position checkpoints. Extract both final-ViT/pre-merger
-and post-merger/pre-LLM features at a fixed 224 crop, mean pool all spatial
-tokens, and train only the linear heads. Normal task checkpoints must carry a
-matching `ssl4rl_export_manifest.json`; never relabel an FVE export.
+Use the fixed ImageNet-100 protocol in `PROBING.md` for Base plus all four
+normal unfrozen checkpoints: Rotation, Position, Jigsaw, and Contrastive.
+Extract both final-ViT/pre-merger and post-merger/pre-LLM features at a fixed
+224 crop, mean pool all spatial tokens, and train only the linear heads. Every
+normal task checkpoint must carry a matching `ssl4rl_export_manifest.json`;
+never relabel an FVE export.
 
 The canonical dataset identity is the 100-class ImageFolder tree documented in
 `PROBING.md` (130,000 train and 5,000 validation images), not
