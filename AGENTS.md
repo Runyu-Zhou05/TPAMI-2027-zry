@@ -472,6 +472,13 @@ validation/checkpoints every 20 steps. Preserve all checkpoints, reward traces,
 and validation JSONL files. The launcher fails closed unless terminal step 100
 and validation steps 0/20/40/60/80/100 are present.
 
+For the separate SEED-Bench replication, follow `SEED_GOLDEN_RLVR.md`. It must
+start from the final normal **SEED-Position** checkpoint, never the MMBench
+Position or FVE checkpoint. The checksum-pinned 14,232-row `SEEDBench_IMG` is
+split by its nine categories into 8,539 train and 5,693 held-out rows. The
+fixed budget is 20 epochs / 320 steps with validation before training and every
+20 steps; the launcher requires committed step 320 plus all validation dumps.
+
 ## Editing and validation rules
 
 - Keep generated models, datasets, caches, logs, traces, and checkpoints out of
